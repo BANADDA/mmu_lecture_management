@@ -372,26 +372,186 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
             <div className={`inline-block align-bottom rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full ${
               darkMode ? 'bg-gray-800' : 'bg-white'
             }`}>
-              {/* Modal content here */}
-              <div className="p-6">
-                <h3 className="text-lg font-medium mb-4">
-                  {editMode ? 'Edit Course Unit' : 'Register New Course Unit'}
-                </h3>
-                {/* Form fields would go here */}
-                <div className="mt-4 flex justify-end gap-2">
+              {/* Modal header */}
+              <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    {editMode ? 'Edit Course Unit' : 'Register New Course Unit'}
+                  </h3>
                   <button 
                     onClick={resetAndCloseModal}
-                    className="px-4 py-2 rounded-md"
+                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-600'}`}
                   >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleAddCourse}
-                    className="px-4 py-2 rounded-md bg-blue-600 text-white"
-                  >
-                    {editMode ? 'Update Course Unit' : 'Register Course Unit'}
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-6 w-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
                   </button>
                 </div>
+              </div>
+              
+              {/* Modal body */}
+              <div className="px-6 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Course Name <span className="text-red-500">*</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      value={currentCourse.name}
+                      onChange={(e) => handleFormChange('name', e.target.value)}
+                      className={`w-full p-2 rounded-md border ${
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                      }`}
+                      placeholder="e.g., Introduction to Programming"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Program <span className="text-red-500">*</span>
+                    </label>
+                    <select 
+                      value={currentCourse.programId}
+                      onChange={(e) => handleFormChange('programId', e.target.value)}
+                      className={`w-full p-2 rounded-md border ${
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                      }`}
+                    >
+                      <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Program</option>
+                      {programs.map(program => (
+                        <option key={program.id} value={program.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                          {program.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Year
+                      </label>
+                      <select 
+                        value={currentCourse.yearOfStudy}
+                        onChange={(e) => handleFormChange('yearOfStudy', e.target.value)}
+                        className={`w-full p-2 rounded-md border ${
+                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                        }`}
+                      >
+                        <option value="1" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 1</option>
+                        <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 2</option>
+                        <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 3</option>
+                        <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 4</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Semester
+                      </label>
+                      <select 
+                        value={currentCourse.semester}
+                        onChange={(e) => handleFormChange('semester', e.target.value)}
+                        className={`w-full p-2 rounded-md border ${
+                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                        }`}
+                      >
+                        <option value="1" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Semester 1</option>
+                        <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Semester 2</option>
+                        <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Semester 3</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Credit Units
+                      </label>
+                      <select 
+                        value={currentCourse.creditUnits}
+                        onChange={(e) => handleFormChange('creditUnits', e.target.value)}
+                        className={`w-full p-2 rounded-md border ${
+                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                        }`}
+                      >
+                        <option value="1" className={darkMode ? 'bg-gray-800' : 'bg-white'}>1 Unit</option>
+                        <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>2 Units</option>
+                        <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>3 Units</option>
+                        <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>4 Units</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Course Code <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex items-center">
+                      <input 
+                        type="text" 
+                        value={currentCourse.code}
+                        onChange={(e) => handleFormChange('code', e.target.value)}
+                        className={`w-full p-2 rounded-md border ${
+                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                        } ${currentCourse.programId ? 'bg-gray-100 dark:bg-gray-900' : ''}`}
+                        placeholder="e.g., CS 1101"
+                        readOnly={!!currentCourse.programId}
+                      />
+                    </div>
+                    {currentCourse.code && (
+                      <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                        {getCodeExplanation(currentCourse.code)}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center">
+                      <input 
+                        type="checkbox" 
+                        id="isApproved"
+                        checked={currentCourse.isApproved}
+                        onChange={(e) => handleFormChange('isApproved', e.target.checked)}
+                        className="mr-2 h-4 w-4"
+                      />
+                      <label htmlFor="isApproved" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Course is approved
+                      </label>
+                    </div>
+                    
+                    <div className="flex items-center">
+                      <input 
+                        type="checkbox" 
+                        id="isCrossCutting"
+                        checked={currentCourse.isCrossCutting}
+                        onChange={(e) => handleFormChange('isCrossCutting', e.target.checked)}
+                        className="mr-2 h-4 w-4"
+                      />
+                      <label htmlFor="isCrossCutting" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        Cross-cutting course
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Modal footer */}
+              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-end gap-2`}>
+                <button 
+                  onClick={resetAndCloseModal}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancel
+                </button>
+                
+                <button 
+                  onClick={handleAddCourse}
+                  className={`px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700`}
+                >
+                  {editMode ? 'Update Course Unit' : 'Register Course Unit'}
+                </button>
               </div>
             </div>
           </div>

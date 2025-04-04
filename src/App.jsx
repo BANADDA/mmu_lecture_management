@@ -1,8 +1,12 @@
 // App.jsx
 import { useEffect, useState } from 'react';
 import { Toaster } from 'react-hot-toast';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import PageTransitionProvider from './components/PageTransitionProvider';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider } from './contexts/AuthContext';
+import LoginPage from './screens/auth/LoginPage';
+import WelcomePage from './screens/auth/WelcomePage';
 import MMUDashboard from './screens/MMUDashboard';
 
 // SVG background patterns
@@ -38,97 +42,94 @@ function App() {
   }, []);
 
   // Function to update dark mode
-  const updateDarkMode = (isDark) => {
-    setDarkMode(isDark);
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+  const toggleDarkMode = () => {
+    const newDarkMode = !darkMode;
+    setDarkMode(newDarkMode);
+    localStorage.setItem('theme', newDarkMode ? 'dark' : 'light');
   };
 
-  // State for user role selection (for demo purposes)
-  const [userRole, setUserRole] = useState('admin');
-
-  // Handler for switching user roles
-  const handleRoleSwitch = (role) => {
-    setUserRole(role);
-  };
+  // Set user role to admin only
+  const userRole = 'admin';
 
   return (
-    <PageTransitionProvider>
-      <div 
-        className={`flex flex-col min-h-screen ${darkMode ? 'bg-gray-900 text-white' : 'bg-[#FDFBF7] text-gray-900'}`}
-        style={{
-          backgroundImage: `url("${darkMode ? darkPatternBg : lightPatternBg}")`,
-          backgroundRepeat: 'repeat',
-          backgroundAttachment: 'fixed',
-          backgroundSize: 'auto'
-        }}
-      >
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            // Default options for all toasts
-            duration: 3000,
-            style: {
-              background: '#363636',
-              color: '#fff',
-            },
-            // Custom success styles
-            success: {
-              style: {
-                background: '#1F2937',
-                border: '1px solid #374151',
-              },
-              iconTheme: {
-                primary: '#10B981',
-                secondary: '#fff',
-              },
-            },
-            // Custom error styles
-            error: {
-              style: {
-                background: '#1F2937',
-                border: '1px solid #374151',
-              },
-              iconTheme: {
-                primary: '#EF4444',
-                secondary: '#fff',
-              },
-            },
+    <AuthProvider>
+      <PageTransitionProvider>
+        <div 
+          className={`flex flex-col min-h-screen ${darkMode ? 'bg-gray-900 text-white' : 'bg-[#FDFBF7] text-gray-900'}`}
+          style={{
+            backgroundImage: `url("${darkMode ? darkPatternBg : lightPatternBg}")`,
+            backgroundRepeat: 'repeat',
+            backgroundAttachment: 'fixed',
+            backgroundSize: 'auto'
           }}
-        />
-        
-        {/* Role selector toggle (for demo purposes) */}
-        <div className={`fixed top-4 right-4 z-50 p-2 rounded-lg shadow-lg ${
-          darkMode ? 'bg-gray-800' : 'bg-white'
-        }`}>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleRoleSwitch('admin')}
-              className={`px-3 py-1 text-sm rounded-md ${
-                userRole === 'admin' 
-                  ? (darkMode ? 'bg-blue-900 text-blue-100' : 'bg-blue-100 text-blue-800') 
-                  : (darkMode ? 'text-gray-400' : 'text-gray-600')
-              }`}
-            >
-              Admin View
-            </button>
-            <button
-              onClick={() => handleRoleSwitch('hod')}
-              className={`px-3 py-1 text-sm rounded-md ${
-                userRole === 'hod' 
-                  ? (darkMode ? 'bg-indigo-900 text-indigo-100' : 'bg-indigo-100 text-indigo-800') 
-                  : (darkMode ? 'text-gray-400' : 'text-gray-600')
-              }`}
-            >
-              HoD View
-            </button>
+        >
+          <Toaster
+            position="bottom-right"
+            toastOptions={{
+              // Default options for all toasts
+              duration: 3000,
+              style: {
+                background: '#363636',
+                color: '#fff',
+              },
+              // Custom success styles
+              success: {
+                style: {
+                  background: '#1F2937',
+                  border: '1px solid #374151',
+                },
+                iconTheme: {
+                  primary: '#10B981',
+                  secondary: '#fff',
+                },
+              },
+              // Custom error styles
+              error: {
+                style: {
+                  background: '#1F2937',
+                  border: '1px solid #374151',
+                },
+                iconTheme: {
+                  primary: '#EF4444',
+                  secondary: '#fff',
+                },
+              },
+            }}
+          />
+          
+          {/* Admin mode indicator */}
+          <div className={`fixed top-4 right-4 z-50 p-2 rounded-lg shadow-lg ${
+            darkMode ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            <div className="flex items-center">
+              <span
+                className={`px-3 py-1 text-sm rounded-md ${
+                  darkMode ? 'bg-blue-900 text-blue-100' : 'bg-blue-100 text-blue-800'
+                }`}
+              >
+                Admin View
+              </span>
+            </div>
           </div>
+          
+          <Routes>
+            {/* Public routes */}
+            <Route path="/" element={<WelcomePage darkMode={darkMode} toggleDarkMode={toggleDarkMode} />} />
+            <Route path="/login" element={<LoginPage darkMode={darkMode} toggleDarkMode={toggleDarkMode} />} />
+            
+            {/* Protected routes */}
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <MMUDashboard darkMode={darkMode} updateDarkMode={toggleDarkMode} userRole={userRole} />
+              </ProtectedRoute>
+            } />
+            
+            {/* Fallback redirect for any unknown routes */}
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
         </div>
-        
-        <Routes>
-          <Route path="/" element={<MMUDashboard darkMode={darkMode} updateDarkMode={updateDarkMode} userRole={userRole} />} />
-        </Routes>
-      </div>
-    </PageTransitionProvider>
+      </PageTransitionProvider>
+    </AuthProvider>
   );
 }
 

@@ -529,7 +529,7 @@ const DepartmentsManagement = ({ darkMode, userRole }) => {
                   </h3>
                   <button 
                     onClick={resetAndCloseModal}
-                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-600'}`}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-6 w-6">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -542,46 +542,54 @@ const DepartmentsManagement = ({ darkMode, userRole }) => {
               <div className="px-6 py-4">
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium mb-1">Department Name</label>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Department Name
+                    </label>
                     <input 
                       type="text" 
                       value={currentDepartment.name}
                       onChange={(e) => handleFormChange('name', e.target.value)}
                       className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
                       }`}
                       placeholder="e.g., Computer Science"
                     />
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium mb-1">Department Code</label>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Department Code
+                    </label>
                     <input 
                       type="text" 
                       value={currentDepartment.code}
                       onChange={(e) => handleFormChange('code', e.target.value)}
                       className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
                       }`}
                       placeholder="e.g., CS"
                     />
-                    <p className="text-xs mt-1 opacity-70">
+                    <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                       A short unique code for the department (2-5 characters)
                     </p>
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium mb-1">Head of Department</label>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Head of Department
+                    </label>
                     <select 
                       value={currentDepartment.hodId}
                       onChange={(e) => handleFormChange('hodId', e.target.value)}
                       className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
                       }`}
                     >
-                      <option value="">Not Assigned</option>
+                      <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Not Assigned</option>
                       {hods.map(hod => (
-                        <option key={hod.id} value={hod.id}>{hod.name}</option>
+                        <option key={hod.id} value={hod.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                          {hod.name}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -592,9 +600,9 @@ const DepartmentsManagement = ({ darkMode, userRole }) => {
                       id="isApproved"
                       checked={currentDepartment.isApproved}
                       onChange={(e) => handleFormChange('isApproved', e.target.checked)}
-                      className="mr-2"
+                      className="mr-2 h-4 w-4"
                     />
-                    <label htmlFor="isApproved" className="text-sm">
+                    <label htmlFor="isApproved" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                       Department is approved
                     </label>
                   </div>
@@ -606,7 +614,7 @@ const DepartmentsManagement = ({ darkMode, userRole }) => {
                 <button 
                   onClick={resetAndCloseModal}
                   className={`px-4 py-2 rounded-md text-sm font-medium ${
-                    darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
                   Cancel
