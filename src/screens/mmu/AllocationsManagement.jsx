@@ -1,24 +1,24 @@
 import {
-    collection,
-    deleteDoc,
-    doc,
-    getDoc,
-    getDocs,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-    where
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import {
-    BookOpen,
-    Edit,
-    Plus,
-    Search,
-    Trash2,
-    User
+  BookOpen,
+  Edit,
+  Plus,
+  Search,
+  Trash2,
+  User
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useState } from 'react';
@@ -56,6 +56,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
   
   // Data states
   const [lecturers, setLecturers] = useState([]);
+  const [allLecturers, setAllLecturers] = useState([]); // Store all lecturers
   const [courses, setCourses] = useState([]);
   const [allocations, setAllocations] = useState([]);
 
@@ -74,7 +75,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
             where("role", "==", "lecturer"), 
             where("department", "==", userDepartment),
             where("isActive", "==", true),
-            orderBy("name")
+            orderBy("displayName")
           );
         } else {
           // For admin, show all active lecturers
@@ -82,7 +83,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
             usersRef, 
             where("role", "==", "lecturer"), 
             where("isActive", "==", true),
-            orderBy("name")
+            orderBy("displayName")
           );
         }
         
@@ -90,9 +91,11 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         const lecturerData = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
+          name: doc.data().displayName || doc.data().name || 'Unknown', // Ensure we have a name to display
           courseLoad: 0 // Will be updated after loading allocations
         }));
-        setLecturers(lecturerData);
+        setAllLecturers(lecturerData); // Store all lecturers
+        setLecturers(lecturerData);     // Initial display of all lecturers
       } catch (error) {
         console.error("Error loading lecturers:", error);
         toast.error("Failed to load lecturers");
@@ -157,7 +160,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
   
   // Load allocations from Firestore with real-time updates
   useEffect(() => {
-    if (lecturers.length === 0 || courses.length === 0) return;
+    if (allLecturers.length === 0 || courses.length === 0) return;
     
     setIsLoading(true);
     const allocationsRef = collection(db, 'allocations');
@@ -198,10 +201,20 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         }
       });
       
-      setLecturers(prev => prev.map(lecturer => ({
+      // Update lecturers with course loads
+      const updatedLecturers = allLecturers.map(lecturer => ({
         ...lecturer,
         courseLoad: lecturerLoads[lecturer.id] || 0
-      })));
+      }));
+      
+      setAllLecturers(updatedLecturers);
+      
+      // If we have a selected course, filter the lecturers again
+      if (currentAllocation.courseId) {
+        filterLecturersByCourseDepartment(currentAllocation.courseId);
+      } else {
+        setLecturers(updatedLecturers);
+      }
       
       setIsLoading(false);
     }, (error) => {
@@ -210,9 +223,8 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
       setIsLoading(false);
     });
     
-    // Cleanup function
     return () => unsubscribe();
-  }, [courses, lecturers, userRole]);
+  }, [allLecturers.length, courses, userRole, currentAllocation.courseId]);
 
   // Helper function to get unallocated courses
   const getUnallocatedCourses = () => {
@@ -238,8 +250,28 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     return matchesSearch;
   });
 
+  // Filter the list of lecturers based on the selected course's department
+  const filterLecturersByCourseDepartment = (courseId) => {
+    const selectedCourse = courses.find(c => c.id === courseId);
+    
+    if (!selectedCourse) {
+      // If no course is selected, show all lecturers
+      setLecturers(allLecturers);
+      return;
+    }
+    
+    // Filter lecturers to only show those from the same department as the course
+    const courseDepartment = selectedCourse.departmentName;
+    const filteredLecturers = allLecturers.filter(lecturer => 
+      lecturer.department === courseDepartment
+    );
+    
+    // Update the lecturers state with the filtered list
+    setLecturers(filteredLecturers);
+  };
+
   const handleFormChange = (field, value) => {
-    // If changing course, update all course-related fields
+    // If changing course, update all course-related fields and filter lecturers
     if (field === 'courseId' && value) {
       const selectedCourse = courses.find(c => c.id === value);
       if (selectedCourse) {
@@ -252,8 +284,15 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
           departmentId: selectedCourse.departmentId,
           departmentName: selectedCourse.departmentName,
           programId: selectedCourse.programId,
-          programName: selectedCourse.programName
+          programName: selectedCourse.programName,
+          // Reset lecturer fields when changing course
+          lecturerId: '',
+          lecturerName: '',
+          lecturerDepartment: ''
         }));
+        
+        // Filter lecturers based on the selected course's department
+        filterLecturersByCourseDepartment(value);
         return;
       }
     }
@@ -428,6 +467,10 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         allocatedBy: allocationToEdit.allocatedBy,
         allocatedOn: allocationToEdit.allocatedOn
       });
+      
+      // Filter lecturers based on the course's department
+      filterLecturersByCourseDepartment(allocationToEdit.courseId);
+      
       setEditMode(true);
       setEditAllocationId(allocationId);
       setShowAllocateModal(true);
@@ -464,9 +507,11 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
       allocatedBy: '',
       allocatedOn: null
     });
+    setLecturers(allLecturers); // Reset to all lecturers
     setEditMode(false);
     setEditAllocationId(null);
     setShowAllocateModal(false);
+    setShowDeleteConfirmation(false);
   };
 
   return (
@@ -768,13 +813,30 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
                       required
                     >
                       <option value="">Select Lecturer</option>
-                      {lecturers.map(lecturer => (
-                        <option key={lecturer.id} value={lecturer.id}>
-                          {lecturer.name} ({lecturer.courseLoad} courses currently)
-                        </option>
-                      ))}
+                      {lecturers.length > 0 ? (
+                        lecturers.map(lecturer => (
+                          <option key={lecturer.id} value={lecturer.id}>
+                            {lecturer.name} ({lecturer.department}) - {lecturer.courseLoad} courses currently
+                          </option>
+                        ))
+                      ) : (
+                        <option disabled>No lecturers available for this department</option>
+                      )}
                     </select>
+                    {currentAllocation.courseId && lecturers.length === 0 && (
+                      <p className={`mt-1 text-xs ${darkMode ? 'text-yellow-400' : 'text-yellow-600'}`}>
+                        No lecturers found for the department of this course. Please add lecturers to this department first.
+                      </p>
+                    )}
                   </div>
+                  
+                  {/* Course Department Info */}
+                  {currentAllocation.courseId && (
+                    <div className={`text-xs rounded-md p-2 ${darkMode ? 'bg-blue-900/20 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                      <p>Selected course belongs to the <strong>{currentAllocation.departmentName}</strong> department.</p>
+                      <p>Showing only lecturers from this department.</p>
+                    </div>
+                  )}
                   
                   {/* Notes */}
                   <div>
