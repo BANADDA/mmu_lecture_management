@@ -9,7 +9,7 @@
       "type": "base",
       "brand": "DeepSeek",
       "downloads": "142586",
-      "lastUpdated": "2023-11-05",
+      "lastUpdated": "2025-11-05",
       "size": "14.2 GB",
       "requirements": {
         "cpu": {
@@ -37,7 +37,7 @@
       "type": "code",
       "brand": "DeepSeek",
       "downloads": "352478",
-      "lastUpdated": "2023-10-18",
+      "lastUpdated": "2025-10-18",
       "size": "13.8 GB",
       "requirements": {
         "cpu": {
@@ -150,7 +150,7 @@
       "type": "base",
       "brand": "Qwen",
       "downloads": "412365",
-      "lastUpdated": "2023-11-30",
+      "lastUpdated": "2025-11-30",
       "size": "3.8 GB",
       "requirements": {
         "cpu": {
@@ -178,7 +178,7 @@
       "type": "base",
       "brand": "Qwen",
       "downloads": "543681",
-      "lastUpdated": "2023-11-30",
+      "lastUpdated": "2025-11-30",
       "size": "14.6 GB",
       "requirements": {
         "cpu": {
@@ -206,7 +206,7 @@
       "type": "chat",
       "brand": "Qwen",
       "downloads": "421536",
-      "lastUpdated": "2023-11-30",
+      "lastUpdated": "2025-11-30",
       "size": "143.5 GB",
       "requirements": {
         "cpu": {

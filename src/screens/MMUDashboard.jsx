@@ -1,47 +1,166 @@
+import { collection, getCountFromServer, onSnapshot, query, where } from 'firebase/firestore';
 import {
-    BarChart,
-    BookMarked,
-    BookOpen,
-    Building,
-    Calendar,
-    Circle,
-    Clock,
-    Download,
-    Filter,
-    Home,
-    LogOut,
-    Menu,
-    Moon,
-    RefreshCcw,
-    Settings,
-    Sun,
-    TrendingUp,
-    User,
-    UserCog,
-    UserPlus,
-    Users
+  BarChart,
+  BookMarked,
+  BookOpen,
+  Building,
+  Calendar,
+  Circle,
+  Clock,
+  Download,
+  Filter,
+  Home,
+  LogOut,
+  Menu,
+  Moon,
+  RefreshCcw,
+  Settings,
+  Sun,
+  User,
+  UserCog,
+  UserPlus,
+  Users
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { db } from '../firebase/firebase';
 import AllocationsManagement from './mmu/AllocationsManagement';
 import CoursesManagement from './mmu/CoursesManagement';
 import DepartmentsManagement from './mmu/DepartmentsManagement';
+import EnhancedScheduleCalendar from './mmu/EnhancedScheduleCalendar';
 import ProgramsManagement from './mmu/ProgramsManagement';
-import ScheduleCalendar from './mmu/ScheduleCalendar';
+import RoomManagement from './mmu/RoomManagement';
 import UsersManagement from './mmu/UsersManagement';
 
-const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
+const MMUDashboard = ({ darkMode, updateDarkMode }) => {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [menuOpen, setMenuOpen] = useState(true);
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  // Use the role from the authenticated user
+  const userRole = user?.role || 'admin';
+
+  // State for dashboard statistics
+  const [stats, setStats] = useState({
+    departments: 0,
+    programs: 0,
+    courses: 0,
+    lecturers: 0,
+    students: 0,
+    activeClasses: 0,
+    collisions: 0,
+  });
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+      // You could add error handling/notification here
+    }
   };
+
+  // Fetch real-time statistics from Firestore
+  useEffect(() => {
+    setIsLoading(true);
+    
+    const fetchStatistics = async () => {
+      try {
+        // Get departments count
+        const departmentsRef = collection(db, 'departments');
+        const departmentsQuery = query(departmentsRef, where('isActive', '==', true));
+        const departmentsSnapshot = await getCountFromServer(departmentsQuery);
+        const departmentsCount = departmentsSnapshot.data().count;
+        
+        // Get programs count
+        const programsRef = collection(db, 'programs');
+        const programsQuery = query(programsRef, where('isActive', '==', true));
+        const programsSnapshot = await getCountFromServer(programsQuery);
+        const programsCount = programsSnapshot.data().count;
+        
+        // Get courses count
+        const coursesRef = collection(db, 'courses');
+        const coursesQuery = query(coursesRef, where('isActive', '==', true));
+        const coursesSnapshot = await getCountFromServer(coursesQuery);
+        const coursesCount = coursesSnapshot.data().count;
+        
+        // Get users count by role
+        const usersRef = collection(db, 'users');
+        
+        // Lecturers count
+        const lecturersQuery = query(usersRef, where('role', '==', 'lecturer'), where('isActive', '==', true));
+        const lecturersSnapshot = await getCountFromServer(lecturersQuery);
+        const lecturersCount = lecturersSnapshot.data().count;
+        
+        // Students count
+        const studentsQuery = query(usersRef, where('role', '==', 'student'), where('isActive', '==', true));
+        const studentsSnapshot = await getCountFromServer(studentsQuery);
+        const studentsCount = studentsSnapshot.data().count;
+        
+        // Get active classes count
+        const classesRef = collection(db, 'allocations');
+        const activeClassesQuery = query(classesRef, where('status', '==', 'active'));
+        const activeClassesSnapshot = await getCountFromServer(activeClassesQuery);
+        const activeClassesCount = activeClassesSnapshot.data().count;
+        
+        // Get collisions count - we'll check for allocations with collision flag
+        const collisionsQuery = query(classesRef, where('hasCollision', '==', true));
+        const collisionsSnapshot = await getCountFromServer(collisionsQuery);
+        const collisionsCount = collisionsSnapshot.data().count;
+        
+        // Update stats state with real data
+        setStats({
+          departments: departmentsCount,
+          programs: programsCount,
+          courses: coursesCount,
+          lecturers: lecturersCount,
+          students: studentsCount,
+          activeClasses: activeClassesCount,
+          collisions: collisionsCount,
+        });
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error fetching statistics:', error);
+        setIsLoading(false);
+      }
+    };
+    
+    fetchStatistics();
+    
+    // Set up real-time listeners for critical data
+    // We'll update certain statistics in real-time for better UX
+    
+    // Active classes listener
+    const classesRef = collection(db, 'allocations');
+    const activeClassesQuery = query(classesRef, where('status', '==', 'active'));
+    const classesUnsubscribe = onSnapshot(activeClassesQuery, (snapshot) => {
+      setStats(prevStats => ({
+        ...prevStats,
+        activeClasses: snapshot.size
+      }));
+    });
+    
+    // Collisions listener
+    const collisionsQuery = query(classesRef, where('hasCollision', '==', true));
+    const collisionsUnsubscribe = onSnapshot(collisionsQuery, (snapshot) => {
+      setStats(prevStats => ({
+        ...prevStats,
+        collisions: snapshot.size
+      }));
+    });
+    
+    // Clean up listeners
+    return () => {
+      classesUnsubscribe();
+      collisionsUnsubscribe();
+    };
+  }, []);
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
@@ -49,22 +168,12 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
     { id: 'departments', label: 'Departments', icon: Building },
     { id: 'programs', label: 'Programs', icon: BookMarked },
     { id: 'courses', label: 'Course Units', icon: BookOpen },
+    { id: 'rooms', label: 'Room Management', icon: Building, adminOnly: true },
     { id: 'allocations', label: 'Allocate Courses', icon: UserCog },
     { id: 'schedule', label: 'Schedule Calendar', icon: Calendar },
     { id: 'analytics', label: 'Analytics', icon: BarChart },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
-
-  // For demonstration purposes - you'd replace this with actual data
-  const stats = {
-    departments: 8,
-    programs: 24,
-    courses: 156,
-    lecturers: 42,
-    students: 1250,
-    activeClasses: 78,
-    collisions: 3,
-  };
 
   const toggleMenu = () => {
     setMenuOpen(!menuOpen);
@@ -84,12 +193,14 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
         return <ProgramsManagement darkMode={darkMode} userRole={userRole} />;
       case 'courses':
         return <CoursesManagement darkMode={darkMode} userRole={userRole} />;
+      case 'rooms':
+        return <RoomManagement darkMode={darkMode} userRole={userRole} />;
       case 'allocations':
         return <AllocationsManagement darkMode={darkMode} userRole={userRole} />;
       case 'schedule':
-        return <ScheduleCalendar darkMode={darkMode} userRole={userRole} />;
+        return <EnhancedScheduleCalendar darkMode={darkMode} userRole={userRole} userDepartment={user?.department} />;
       case 'analytics':
-        return <AnalyticsScreen darkMode={darkMode} />;
+        return <AnalyticsScreen darkMode={darkMode} stats={stats} />;
       default:
         return renderAdminDashboard();
     }
@@ -111,31 +222,35 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatsCard 
           title="Departments" 
-          value={stats.departments}
+          value={isLoading ? '...' : stats.departments}
           icon={<Building className={`h-6 w-6 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />}
           darkMode={darkMode}
           color="blue"
+          isLoading={isLoading}
         />
         <StatsCard 
           title="Programs" 
-          value={stats.programs}
+          value={isLoading ? '...' : stats.programs}
           icon={<BookMarked className={`h-6 w-6 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />}
           darkMode={darkMode}
           color="indigo"
+          isLoading={isLoading}
         />
         <StatsCard 
           title="Course Units" 
-          value={stats.courses}
+          value={isLoading ? '...' : stats.courses}
           icon={<BookOpen className={`h-6 w-6 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />}
           darkMode={darkMode}
           color="amber"
+          isLoading={isLoading}
         />
         <StatsCard 
           title="Lecturers" 
-          value={stats.lecturers}
+          value={isLoading ? '...' : stats.lecturers}
           icon={<Users className={`h-6 w-6 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />}
           darkMode={darkMode}
           color="emerald"
+          isLoading={isLoading}
         />
       </div>
 
@@ -154,11 +269,13 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
             </div>
             <div className="flex items-end justify-between">
               <span className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                {stats.students}
+                {isLoading ? '...' : stats.students}
               </span>
-              <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-500">
-                +12% ↑
-              </span>
+              {!isLoading && (
+                <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-500">
+                  Active
+                </span>
+              )}
             </div>
           </div>
           
@@ -171,11 +288,13 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
             </div>
             <div className="flex items-end justify-between">
               <span className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                {stats.activeClasses}
+                {isLoading ? '...' : stats.activeClasses}
               </span>
-              <span className="text-xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-500">
-                Currently Running
-              </span>
+              {!isLoading && (
+                <span className="text-xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-500">
+                  Currently Running
+                </span>
+              )}
             </div>
           </div>
           
@@ -232,7 +351,7 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
       </div>
 
       {/* Collision alerts */}
-      {stats.collisions > 0 && (
+      {!isLoading && stats.collisions > 0 && (
         <div className={`p-6 rounded-lg ${darkMode ? 'bg-red-900/20 border border-red-800' : 'bg-red-50 border border-red-100'} mb-8`}>
           <div className="flex items-start gap-3">
             <div className={`p-2 rounded-full ${darkMode ? 'bg-red-900/30' : 'bg-red-100'}`}>
@@ -286,7 +405,8 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
           >
             {darkMode ? <Sun className="h-5 w-5 text-yellow-400" /> : <Moon className="h-5 w-5 text-gray-700" />}
           </button>
-          <div className={`p-2 rounded-full ${darkMode ? 'bg-[var(--polaris-card-bg)]' : 'bg-gray-100'}`}>
+          <div className={`flex items-center ml-4 p-2 rounded-full ${darkMode ? 'bg-[var(--polaris-card-bg)]' : 'bg-gray-100'}`}>
+            <span className="text-sm font-medium mr-2">{user?.displayName || user?.email}</span>
             <User className={`h-5 w-5 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`} />
           </div>
         </div>
@@ -301,52 +421,49 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
         >
           <div className="p-3">
             <div className="space-y-1">
-              {menuItems.map((item) => (
-                <div key={item.id}>
-                  <button
-                    onClick={() => setActiveSection(item.id)}
-                    className={`w-full flex items-center ${
-                      !menuOpen ? 'justify-center' : ''
-                    } p-3 rounded text-lg ${
-                      activeSection === item.id
-                        ? `${darkMode ? 'bg-[var(--polaris-card-bg)] text-white' : 'bg-blue-50 text-blue-700 font-medium'}`
-                        : `${darkMode ? 'hover:bg-[var(--polaris-card-bg)] text-gray-400' : 'hover:bg-gray-100 text-gray-700'}`
-                    } transition-colors`}
-                  >
-                    {item.icon && React.createElement(item.icon, {
-                      className: `h-6 w-6 ${!menuOpen ? 'mx-auto' : 'mr-3'} ${
+              {/* Sidebar Menu Items */}
+              {menuItems
+                .filter(item => !item.adminOnly || userRole === 'admin') // Filter out admin-only items
+                .map(item => (
+                  <div key={item.id}>
+                    <button
+                      onClick={() => setActiveSection(item.id)}
+                      className={`w-full flex items-center ${
+                        !menuOpen ? 'justify-center' : ''
+                      } p-3 rounded text-lg ${
                         activeSection === item.id
-                          ? (darkMode ? 'text-white' : 'text-blue-600')
-                          : (darkMode ? 'text-gray-400' : 'text-gray-600')
-                      }`
-                    })}
-                    {menuOpen && <span>{item.label}</span>}
-                  </button>
+                          ? `${darkMode ? 'bg-[var(--polaris-card-bg)] text-white' : 'bg-blue-50 text-blue-700 font-medium'}`
+                          : `${darkMode ? 'hover:bg-[var(--polaris-card-bg)] text-gray-400' : 'hover:bg-gray-100 text-gray-700'}`
+                      } transition-colors`}
+                    >
+                      <item.icon size={menuOpen ? 20 : 24} />
+                      {menuOpen && <span>{item.label}</span>}
+                    </button>
 
-                  {menuOpen && item.items && activeSection === item.id && (
-                    <div className="mt-1 ml-4 space-y-1">
-                      {item.items.map((subItem) => (
-                        <button
-                          key={subItem.id}
-                          onClick={() => setActiveSection(subItem.id)}
-                          className={`w-full flex items-center p-2.5 rounded text-base ${
-                            activeSection === subItem.id
-                              ? `${darkMode ? 'text-white font-medium' : 'text-blue-700 font-medium'}`
-                              : `${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-800'}`
-                          }`}
-                        >
-                          <Circle className={`h-2.5 w-2.5 mr-3 ${
-                            activeSection === subItem.id 
-                              ? (darkMode ? 'text-white fill-current' : 'text-blue-600 fill-current') 
-                              : ''
-                          }`} />
-                          <span>{subItem.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+                    {menuOpen && item.items && activeSection === item.id && (
+                      <div className="mt-1 ml-4 space-y-1">
+                        {item.items.map((subItem) => (
+                          <button
+                            key={subItem.id}
+                            onClick={() => setActiveSection(subItem.id)}
+                            className={`w-full flex items-center p-2.5 rounded text-base ${
+                              activeSection === subItem.id
+                                ? `${darkMode ? 'text-white font-medium' : 'text-blue-700 font-medium'}`
+                                : `${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-800'}`
+                            }`}
+                          >
+                            <Circle className={`h-2.5 w-2.5 mr-3 ${
+                              activeSection === subItem.id 
+                                ? (darkMode ? 'text-white fill-current' : 'text-blue-600 fill-current') 
+                                : ''
+                            }`} />
+                            <span>{subItem.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           </div>
         </aside>
@@ -405,7 +522,7 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
           {/* MMU@Date on the left */}
           <div className="flex items-center">
             <span className={`text-base font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-              MMU@{new Date().toLocaleDateString()} - Administrator
+              MMU@{new Date().toLocaleDateString()} - {user?.role === 'admin' ? 'Administrator' : 'Department Head'}
             </span>
           </div>
 
@@ -437,40 +554,71 @@ const MMUDashboard = ({ darkMode, updateDarkMode, userRole = 'admin' }) => {
 };
 
 // Modified StatsCard Component for better light mode visibility
-const StatsCard = ({ title, value, icon, darkMode, color }) => {
+const StatsCard = ({ title, value, icon, darkMode, color, isLoading }) => {
   const getColorClasses = (colorName) => {
     const colorMap = {
-      blue: { dark: 'text-blue-400 bg-blue-900/20', light: 'text-blue-700 bg-blue-50' },
-      indigo: { dark: 'text-indigo-400 bg-indigo-900/20', light: 'text-indigo-700 bg-indigo-50' },
-      amber: { dark: 'text-amber-400 bg-amber-900/20', light: 'text-amber-700 bg-amber-50' },
-      emerald: { dark: 'text-emerald-400 bg-emerald-900/20', light: 'text-emerald-700 bg-emerald-50' },
-      red: { dark: 'text-red-400 bg-red-900/20', light: 'text-red-700 bg-red-50' },
+      blue: {
+        light: 'text-blue-600 bg-blue-100',
+        dark: 'text-blue-400 bg-blue-900/30'
+      },
+      indigo: {
+        light: 'text-indigo-600 bg-indigo-100',
+        dark: 'text-indigo-400 bg-indigo-900/30'
+      },
+      amber: {
+        light: 'text-amber-600 bg-amber-100',
+        dark: 'text-amber-400 bg-amber-900/30'
+      },
+      emerald: {
+        light: 'text-emerald-600 bg-emerald-100',
+        dark: 'text-emerald-400 bg-emerald-900/30'
+      },
+      red: {
+        light: 'text-red-600 bg-red-100',
+        dark: 'text-red-400 bg-red-900/30'
+      }
     };
-    
     return colorMap[colorName] || colorMap.blue;
   };
 
   const colorClasses = getColorClasses(color);
-  
+
   return (
-    <div className={`p-3 rounded border ${
-      darkMode 
-        ? 'bg-[var(--polaris-card-bg)] border-[var(--polaris-border-dark)]' 
-        : 'bg-white border-gray-200 shadow-sm'
+    <div className={`rounded-lg p-4 border ${
+      darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'
     }`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className={`p-1.5 rounded ${darkMode ? colorClasses.dark : colorClasses.light}`}>
-          {React.cloneElement(icon, { 
-            className: `h-3.5 w-3.5 ${darkMode ? colorClasses.dark.split(' ')[0] : colorClasses.light.split(' ')[0]}` 
-          })}
+      <div className="flex justify-between items-center mb-3">
+        <div className={`p-2 rounded-full ${
+          darkMode ? colorClasses.dark : colorClasses.light
+        }`}>
+          {icon}
         </div>
         <span className={`text-xl font-semibold ${
           darkMode ? colorClasses.dark.split(' ')[0] : colorClasses.light.split(' ')[0]
-        }`}>{value}</span>
+        }`}>
+          {isLoading ? (
+            <div className="animate-pulse h-6 w-8 bg-gray-300 dark:bg-gray-700 rounded"></div>
+          ) : (
+            value
+          )}
+        </span>
       </div>
       <h3 className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-700 font-medium'}`}>{title}</h3>
     </div>
   );
+};
+
+StatsCard.propTypes = {
+  title: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+  icon: PropTypes.node.isRequired,
+  darkMode: PropTypes.bool.isRequired,
+  color: PropTypes.string.isRequired,
+  isLoading: PropTypes.bool,
+};
+
+StatsCard.defaultProps = {
+  isLoading: false,
 };
 
 // Modified QuickActionButton Component for better light mode visibility
@@ -497,15 +645,6 @@ const QuickActionButton = ({ label, icon, onClick, darkMode }) => {
 MMUDashboard.propTypes = {
   darkMode: PropTypes.bool.isRequired,
   updateDarkMode: PropTypes.func.isRequired,
-  userRole: PropTypes.oneOf(['admin', 'hod']),
-};
-
-StatsCard.propTypes = {
-  title: PropTypes.string.isRequired,
-  value: PropTypes.number.isRequired,
-  icon: PropTypes.node.isRequired,
-  darkMode: PropTypes.bool.isRequired,
-  color: PropTypes.string.isRequired,
 };
 
 QuickActionButton.propTypes = {
@@ -516,201 +655,202 @@ QuickActionButton.propTypes = {
 };
 
 // Analytics Screen Component
-const AnalyticsScreen = ({ darkMode }) => {
+const AnalyticsScreen = ({ darkMode, stats }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [dateRange, setDateRange] = useState('month');
   const [isLoading, setIsLoading] = useState(false);
-
-  // Mock data for analytics
-  const overviewStats = {
-    totalStudents: 1250,
-    totalLecturers: 42,
-    totalCourses: 156,
-    activeClasses: 78,
-    departmentsCount: 8,
-    programsCount: 24,
-    averageClassSize: 28,
-    courseUtilization: 87, // percent
-    lecturerUtilization: 92, // percent
+  
+  // Calculate growth rates (we'll simulate this with random values for now)
+  // In a real implementation, you would compare current vs previous period data
+  const calculateGrowth = (value) => {
+    // Simulate a random growth rate between -15% and +25%
+    const randomGrowth = Math.floor(Math.random() * 40) - 15;
+    return {
+      value: value,
+      percentage: randomGrowth,
+      trend: randomGrowth >= 0 ? 'up' : 'down'
+    };
   };
-
-  const departmentData = [
-    { name: 'Computer Science', students: 365, courses: 38, lecturers: 12, rooms: 8, utilization: 94 },
-    { name: 'Business Information Technology', students: 280, courses: 32, lecturers: 9, rooms: 6, utilization: 88 },
-    { name: 'Business Administration', students: 450, courses: 42, lecturers: 14, rooms: 10, utilization: 91 },
-    { name: 'Software Engineering', students: 180, courses: 28, lecturers: 8, rooms: 5, utilization: 85 },
-    { name: 'Mechanical Engineering', students: 240, courses: 32, lecturers: 11, rooms: 7, utilization: 89 },
-    { name: 'Electrical Engineering', students: 210, courses: 30, lecturers: 10, rooms: 7, utilization: 82 },
-  ];
-
-  const courseDistributionData = [
-    { department: 'Computer Science', firstYear: 9, secondYear: 12, thirdYear: 9, fourthYear: 8 },
-    { department: 'Business Information Technology', firstYear: 8, secondYear: 10, thirdYear: 8, fourthYear: 6 },
-    { department: 'Business Administration', firstYear: 12, secondYear: 11, thirdYear: 10, fourthYear: 9 },
-    { department: 'Software Engineering', firstYear: 7, secondYear: 8, thirdYear: 7, fourthYear: 6 },
-    { department: 'Mechanical Engineering', firstYear: 8, secondYear: 9, thirdYear: 8, fourthYear: 7 },
-    { department: 'Electrical Engineering', firstYear: 8, secondYear: 8, thirdYear: 7, fourthYear: 7 },
-  ];
-
-  const timelineData = [
-    { month: 'Jan', students: 1180, courses: 142, utilization: 83 },
-    { month: 'Feb', students: 1195, courses: 145, utilization: 85 },
-    { month: 'Mar', students: 1210, courses: 148, utilization: 86 },
-    { month: 'Apr', students: 1225, courses: 152, utilization: 86 },
-    { month: 'May', students: 1235, courses: 154, utilization: 87 },
-    { month: 'Jun', students: 1250, courses: 156, utilization: 87 },
-  ];
+  
+  // Generate metrics with growth calculations
+  const metrics = {
+    students: calculateGrowth(stats.students),
+    departments: calculateGrowth(stats.departments),
+    programs: calculateGrowth(stats.programs),
+    courses: calculateGrowth(stats.courses),
+    lecturers: calculateGrowth(stats.lecturers),
+    activeClasses: calculateGrowth(stats.activeClasses),
+    collisions: calculateGrowth(stats.collisions),
+  };
 
   const handleRefreshData = () => {
     setIsLoading(true);
     
-    // Simulate API call
+    // Simulate a refresh delay
     setTimeout(() => {
       setIsLoading(false);
-    }, 1200);
+    }, 1500);
   };
-
+  
   const handleExportReport = (type) => {
-    alert(`Exporting ${type} report...`);
-    // In a real app, this would trigger a report generation and download
+    alert(`Exporting ${type} report. This feature will be implemented soon.`);
   };
-
+  
   const handleDateRangeChange = (range) => {
     setDateRange(range);
   };
 
   const renderOverviewTab = () => (
-    <div className="space-y-8">
-      {/* Key metrics cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <MetricCard 
           title="Total Students"
-          value={overviewStats.totalStudents}
-          icon={<Users />}
-          trend="+5.2%"
+          value={metrics.students.value}
+          icon={<Users className={`h-5 w-5 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />}
+          trend={metrics.students}
           darkMode={darkMode}
           color="blue"
         />
         <MetricCard 
           title="Total Courses"
-          value={overviewStats.totalCourses}
-          icon={<BookOpen />}
-          trend="+3.8%"
+          value={metrics.courses.value}
+          icon={<BookOpen className={`h-5 w-5 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />}
+          trend={metrics.courses}
           darkMode={darkMode}
           color="amber"
         />
         <MetricCard 
           title="Departments"
-          value={overviewStats.departmentsCount}
-          icon={<Building />}
-          trend="Stable"
+          value={metrics.departments.value}
+          icon={<Building className={`h-5 w-5 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />}
+          trend={metrics.departments}
           darkMode={darkMode}
           color="indigo"
         />
         <MetricCard 
           title="Active Classes"
-          value={overviewStats.activeClasses}
-          icon={<Calendar />}
-          trend="+12.1%"
+          value={metrics.activeClasses.value}
+          icon={<Calendar className={`h-5 w-5 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />}
+          trend={metrics.activeClasses}
           darkMode={darkMode}
           color="emerald"
         />
       </div>
-
-      {/* Utilization charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      
+      {/* System Health Overview */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <div className={`p-6 rounded-lg ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className={`font-semibold text-lg ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-              Course Utilization
-            </h3>
+          <h3 className={`font-semibold mb-4 flex items-center justify-between ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+            <span>Course Utilization</span>
             <span className={`${
-              overviewStats.courseUtilization > 85 
+              metrics.courses.value > 85 
                 ? 'text-green-500 bg-green-500/10' 
-                : overviewStats.courseUtilization > 70 
+                : metrics.courses.value > 70 
                   ? 'text-amber-500 bg-amber-500/10' 
                   : 'text-red-500 bg-red-500/10'
             } text-xs px-2 py-1 rounded-full`}>
-              {overviewStats.courseUtilization}%
+              {Math.min(Math.round((metrics.courses.value / (metrics.courses.value + 20)) * 100), 100)}%
             </span>
-          </div>
-          <div className="h-64 flex items-center justify-center">
-            {/* This would be a real chart in a production app */}
-            <div className="w-full">
-              <div className="relative pt-1">
-                <div className="flex mb-2 items-center justify-between">
-                  <div>
-                    <span className={`text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full ${
-                      darkMode ? 'text-green-400 bg-green-900/20' : 'text-green-600 bg-green-100'
-                    }`}>
-                      Current Usage
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className={`text-xs font-semibold inline-block ${darkMode ? 'text-white' : 'text-gray-600'}`}>
-                      {overviewStats.courseUtilization}%
-                    </span>
-                  </div>
+          </h3>
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center">
+                  <div className={`w-3 h-3 rounded-full ${darkMode ? 'bg-emerald-500' : 'bg-emerald-500'} mr-2`}></div>
+                  <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>System Health</span>
                 </div>
-                <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
-                  <div style={{ width: `${overviewStats.courseUtilization}%` }} className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500"></div>
+                <div className="text-right">
+                  <span className={`text-xs font-semibold inline-block ${darkMode ? 'text-white' : 'text-gray-600'}`}>
+                    {Math.min(Math.round((metrics.courses.value / (metrics.courses.value + 20)) * 100), 100)}%
+                  </span>
                 </div>
               </div>
-              <div className="flex justify-between text-xs text-gray-500 mb-6">
-                <span>Course Distribution by Department</span>
+              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+                <div 
+                  style={{ width: `${Math.min(Math.round((metrics.courses.value / (metrics.courses.value + 20)) * 100), 100)}%` }} 
+                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-green-500"
+                ></div>
               </div>
-              <div className="space-y-4">
-                {departmentData.map(dept => (
-                  <div key={dept.name}>
-                    <div className="flex justify-between mb-1">
-                      <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{dept.name}</span>
-                      <span className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{dept.courses}</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-1.5">
-                      <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: `${(dept.courses / overviewStats.totalCourses) * 100}%` }}></div>
-                    </div>
-                  </div>
-                ))}
+            </div>
+            
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center">
+                  <div className={`w-3 h-3 rounded-full ${darkMode ? 'bg-blue-500' : 'bg-blue-500'} mr-2`}></div>
+                  <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Staff Allocation</span>
+                </div>
+                <div className="text-right">
+                  <span className={`text-xs font-semibold inline-block ${darkMode ? 'text-white' : 'text-gray-600'}`}>
+                    {Math.min(Math.round((metrics.lecturers.value / (metrics.courses.value * 0.3)) * 100), 100)}%
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+                <div 
+                  style={{ width: `${Math.min(Math.round((metrics.lecturers.value / (metrics.courses.value * 0.3)) * 100), 100)}%` }} 
+                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-500"
+                ></div>
+              </div>
+            </div>
+            
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center">
+                  <div className={`w-3 h-3 rounded-full ${darkMode ? 'bg-amber-500' : 'bg-amber-500'} mr-2`}></div>
+                  <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Room Usage</span>
+                </div>
+                <div className="text-right">
+                  <span className={`text-xs font-semibold inline-block ${darkMode ? 'text-white' : 'text-gray-600'}`}>
+                    {Math.min(Math.round(metrics.activeClasses.value / 100 * 100), 100)}%
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+                <div 
+                  style={{ width: `${Math.min(Math.round(metrics.activeClasses.value / 100 * 100), 100)}%` }} 
+                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-amber-500"
+                ></div>
               </div>
             </div>
           </div>
         </div>
-
+        
         <div className={`p-6 rounded-lg ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
-          <div className="flex justify-between items-center mb-4">
-            <h3 className={`font-semibold text-lg ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-              Growth Trends
-            </h3>
-            <TrendingUp className={`h-5 w-5 ${darkMode ? 'text-green-400' : 'text-green-600'}`} />
-          </div>
-          <div className="h-64 flex items-center justify-center">
-            {/* This would be a real chart in a production app */}
-            <div className="w-full h-full flex items-end justify-around gap-1">
-              {timelineData.map((item, index) => (
-                <div key={index} className="flex flex-col items-center gap-1 w-full">
-                  <div className="relative w-full">
-                    <div 
-                      style={{ height: `${(item.students / 1300) * 100}%` }} 
-                      className={`w-full rounded-t ${darkMode ? 'bg-blue-500/70' : 'bg-blue-500'}`}
-                    ></div>
-                  </div>
-                  <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{item.month}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <div className={`w-3 h-3 rounded-full mr-2 ${darkMode ? 'bg-blue-500/70' : 'bg-blue-500'}`}></div>
-                <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Student Enrollment</span>
+          <h3 className={`font-semibold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Student Distribution</h3>
+          <div className="flex items-center justify-center h-52">
+            <div className="text-center">
+              <div className="text-4xl font-bold mb-2 text-blue-500">{metrics.students.value}</div>
+              <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Total Students</div>
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <span className={`text-xs px-2 py-1 rounded-full ${darkMode ? 'bg-green-900/20 text-green-400' : 'bg-green-100 text-green-600'}`}>
+                  {metrics.students.percentage >= 0 ? `+${metrics.students.percentage}%` : `${metrics.students.percentage}%`} YoY
+                </span>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full ${darkMode ? 'bg-green-900/20 text-green-400' : 'bg-green-100 text-green-600'}`}>
-                +5.9% YoY
-              </span>
             </div>
           </div>
         </div>
+      </div>
+      
+      {/* Quick Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <QuickStatCard 
+          title="Lecturers"
+          value={metrics.lecturers.value}
+          subtitle={`${metrics.lecturers.percentage >= 0 ? '+' : ''}${metrics.lecturers.percentage}% from last semester`}
+          darkMode={darkMode}
+        />
+        <QuickStatCard 
+          title="Programs"
+          value={metrics.programs.value}
+          subtitle={`${metrics.programs.percentage >= 0 ? '+' : ''}${metrics.programs.percentage}% from last semester`}
+          darkMode={darkMode}
+        />
+        <QuickStatCard 
+          title="Schedule Efficiency" 
+          value={`${Math.min(90 + metrics.activeClasses.percentage, 99)}%`}
+          subtitle={`${metrics.activeClasses.percentage >= 0 ? '+' : ''}${metrics.activeClasses.percentage}% from last semester`}
+          darkMode={darkMode}
+        />
       </div>
     </div>
   );
@@ -976,42 +1116,55 @@ const AnalyticsScreen = ({ darkMode }) => {
 
 // Components for the analytics screen
 const MetricCard = ({ title, value, icon, trend, darkMode, color }) => {
-  // Color classes based on the passed color prop
   const getColorClasses = (colorName) => {
     const colorMap = {
-      blue: { dark: 'text-blue-400 bg-blue-900/20', light: 'text-blue-700 bg-blue-50' },
-      indigo: { dark: 'text-indigo-400 bg-indigo-900/20', light: 'text-indigo-700 bg-indigo-50' },
-      amber: { dark: 'text-amber-400 bg-amber-900/20', light: 'text-amber-700 bg-amber-50' },
-      emerald: { dark: 'text-emerald-400 bg-emerald-900/20', light: 'text-emerald-700 bg-emerald-50' },
+      blue: {
+        light: 'text-blue-600 bg-blue-100',
+        dark: 'text-blue-400 bg-blue-900/30'
+      },
+      indigo: {
+        light: 'text-indigo-600 bg-indigo-100',
+        dark: 'text-indigo-400 bg-indigo-900/30'
+      },
+      amber: {
+        light: 'text-amber-600 bg-amber-100',
+        dark: 'text-amber-400 bg-amber-900/30'
+      },
+      emerald: {
+        light: 'text-emerald-600 bg-emerald-100',
+        dark: 'text-emerald-400 bg-emerald-900/30'
+      },
+      red: {
+        light: 'text-red-600 bg-red-100',
+        dark: 'text-red-400 bg-red-900/30'
+      }
     };
     
     return colorMap[colorName] || colorMap.blue;
   };
 
   const colorClasses = getColorClasses(color);
-  
+  const trendDirection = typeof trend === 'object' ? trend.trend : 'stable';
+  const trendValue = typeof trend === 'object' ? (trend.percentage >= 0 ? `+${trend.percentage}%` : `${trend.percentage}%`) : trend;
+
   return (
     <div className={`p-6 rounded-lg ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className={`font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{title}</h3>
+      <div className="flex items-center justify-between mb-3">
         <div className={`p-2 rounded-full ${darkMode ? colorClasses.dark : colorClasses.light}`}>
-          {React.cloneElement(icon, { 
-            className: `h-5 w-5 ${darkMode ? colorClasses.dark.split(' ')[0] : colorClasses.light.split(' ')[0]}` 
-          })}
+          {icon}
         </div>
+        <span className="text-sm font-medium">{title}</span>
       </div>
       <div className="flex items-end justify-between">
-        <span className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+        <span className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
           {value}
         </span>
         <span className={`text-xs px-2 py-1 rounded-full ${
-          trend.includes('+') 
-            ? 'bg-green-500/10 text-green-500' 
-            : trend === 'Stable' 
-              ? 'bg-blue-500/10 text-blue-500' 
-              : 'bg-red-500/10 text-red-500'
+          trendDirection === 'up' ? 'bg-green-500/10 text-green-500' : 
+          trendDirection === 'down' ? 'bg-red-500/10 text-red-500' : 
+          'bg-blue-500/10 text-blue-500'
         }`}>
-          {trend}
+          {trendValue}
         </span>
       </div>
     </div>
@@ -1044,13 +1197,17 @@ const ReportCard = ({ title, description, icon: Icon, onClick, darkMode }) => {
 
 AnalyticsScreen.propTypes = {
   darkMode: PropTypes.bool.isRequired,
+  stats: PropTypes.object.isRequired,
 };
 
 MetricCard.propTypes = {
   title: PropTypes.string.isRequired,
   value: PropTypes.number.isRequired,
   icon: PropTypes.node.isRequired,
-  trend: PropTypes.string.isRequired,
+  trend: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.object
+  ]).isRequired,
   darkMode: PropTypes.bool.isRequired,
   color: PropTypes.string.isRequired
 };
@@ -1060,6 +1217,22 @@ ReportCard.propTypes = {
   description: PropTypes.string.isRequired,
   icon: PropTypes.func.isRequired,
   onClick: PropTypes.func.isRequired,
+  darkMode: PropTypes.bool.isRequired
+};
+
+// Helper component for Quick Stats
+const QuickStatCard = ({ title, value, subtitle, darkMode }) => (
+  <div className={`p-4 rounded-lg ${darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'}`}>
+    <h4 className={`text-sm font-medium ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{title}</h4>
+    <div className={`text-xl font-semibold mt-1 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{value}</div>
+    <p className={`text-xs mt-1 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>{subtitle}</p>
+  </div>
+);
+
+QuickStatCard.propTypes = {
+  title: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]).isRequired,
+  subtitle: PropTypes.string.isRequired,
   darkMode: PropTypes.bool.isRequired
 };
 

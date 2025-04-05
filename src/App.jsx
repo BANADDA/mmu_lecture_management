@@ -14,6 +14,8 @@ const lightPatternBg = `data:image/svg+xml,%3Csvg width='60' height='60' viewBox
 const darkPatternBg = `data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23FFFFFF' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E`;
 
 function App() {
+  const [appInitialized, setAppInitialized] = useState(false);
+  
   // Initialize dark mode based on system preference or saved preference
   const [darkMode, setDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem('theme');
@@ -22,6 +24,16 @@ function App() {
     }
     return savedTheme === 'dark';
   });
+
+  // Set initialization timeout to give Firebase time to set up
+  useEffect(() => {
+    // Give Firebase some time to initialize and create the admin user if needed
+    const timer = setTimeout(() => {
+      setAppInitialized(true);
+    }, 2000);
+    
+    return () => clearTimeout(timer);
+  }, []);
 
   // Update dark mode when system preference changes
   useEffect(() => {
@@ -48,8 +60,30 @@ function App() {
     localStorage.setItem('theme', newDarkMode ? 'dark' : 'light');
   };
 
-  // Set user role to admin only
-  const userRole = 'admin';
+  // Show loading screen while Firebase initializes
+  if (!appInitialized) {
+    return (
+      <div 
+        className={`min-h-screen flex flex-col items-center justify-center p-4 ${
+          darkMode ? 'bg-gray-900 text-white' : 'bg-[#FDFBF7] text-gray-900'
+        }`}
+        style={{
+          backgroundImage: `url("${darkMode ? darkPatternBg : lightPatternBg}")`,
+          backgroundRepeat: 'repeat',
+          backgroundAttachment: 'fixed',
+          backgroundSize: 'auto'
+        }}
+      >
+        <div className="flex items-center justify-center w-20 h-20 rounded-full bg-indigo-600 text-white text-2xl font-bold mb-6">
+          MMU
+        </div>
+        <h1 className={`text-2xl font-bold mb-6 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+          Initializing System...
+        </h1>
+        <div className="w-16 h-16 border-t-4 border-b-4 border-indigo-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <AuthProvider>
@@ -97,21 +131,6 @@ function App() {
             }}
           />
           
-          {/* Admin mode indicator */}
-          <div className={`fixed top-4 right-4 z-50 p-2 rounded-lg shadow-lg ${
-            darkMode ? 'bg-gray-800' : 'bg-white'
-          }`}>
-            <div className="flex items-center">
-              <span
-                className={`px-3 py-1 text-sm rounded-md ${
-                  darkMode ? 'bg-blue-900 text-blue-100' : 'bg-blue-100 text-blue-800'
-                }`}
-              >
-                Admin View
-              </span>
-            </div>
-          </div>
-          
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<WelcomePage darkMode={darkMode} toggleDarkMode={toggleDarkMode} />} />
@@ -120,7 +139,7 @@ function App() {
             {/* Protected routes */}
             <Route path="/dashboard" element={
               <ProtectedRoute>
-                <MMUDashboard darkMode={darkMode} updateDarkMode={toggleDarkMode} userRole={userRole} />
+                <MMUDashboard darkMode={darkMode} updateDarkMode={toggleDarkMode} />
               </ProtectedRoute>
             } />
             

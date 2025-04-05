@@ -1,140 +1,449 @@
 import {
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where
+} from 'firebase/firestore';
+import {
     BookOpen,
-    CheckSquare,
     Edit,
-    Filter,
     Plus,
     Search,
-    User,
-    UserCog,
-    X
+    Trash2,
+    User
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { toast } from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { db } from '../../firebase/firebase';
 
 const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer Science' }) => {
+  const { user } = useAuth();
+  
+  // State variables
   const [showAllocateModal, setShowAllocateModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentAllocation, setCurrentAllocation] = useState({
     courseId: '',
     lecturerId: '',
-    notes: ''
+    courseName: '',
+    courseCode: '',
+    courseYearSemester: '',
+    departmentId: '',
+    departmentName: '',
+    programId: '',
+    programName: '',
+    lecturerName: '',
+    lecturerDepartment: '',
+    notes: '',
+    allocatedBy: '',
+    allocatedOn: null
   });
   const [editMode, setEditMode] = useState(false);
-
-  // Mock lecturers for dropdown
-  const allLecturers = [
-    { id: 1, name: 'Dr. John Smith', department: 'Computer Science', expertise: 'Programming, Database Systems', courseLoad: 2 },
-    { id: 2, name: 'Prof. Mary Johnson', department: 'Business Information Technology', expertise: 'Web Development, IT Project Management', courseLoad: 3 },
-    { id: 3, name: 'Dr. Elizabeth Brown', department: 'Software Engineering', expertise: 'Software Design, Testing', courseLoad: 2 },
-    { id: 4, name: 'Jane Williams', department: 'Computer Science', expertise: 'Web Development, UI/UX', courseLoad: 3 },
-    { id: 5, name: 'Prof. Michael Wilson', department: 'Computer Science', expertise: 'AI, Machine Learning', courseLoad: 1 },
-  ];
+  const [editAllocationId, setEditAllocationId] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isDeletingAllocation, setIsDeletingAllocation] = useState(false);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   
-  // Filter lecturers based on user role
-  const lecturers = userRole === 'admin' 
-    ? allLecturers 
-    : allLecturers.filter(lecturer => lecturer.department === userDepartment);
+  // Data states
+  const [lecturers, setLecturers] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [allocations, setAllocations] = useState([]);
 
-  // Filter unallocated courses based on user role
-  const allUnallocatedCourses = [
-    { id: 5, name: 'Operating Systems', code: 'CS 3105', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', yearSemester: 'Year 3, Semester 1', creditUnits: 3, isCrossCutting: false },
-    { id: 6, name: 'Business Statistics', code: 'BBA 2103', program: 'Bachelor of Business Administration', department: 'Business Administration', yearSemester: 'Year 2, Semester 1', creditUnits: 3, isCrossCutting: false },
-    { id: 8, name: 'Advanced Programming', code: 'CS 2203', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', yearSemester: 'Year 2, Semester 2', creditUnits: 4, isCrossCutting: false },
-  ];
+  // Load lecturers from Firestore
+  useEffect(() => {
+    const loadLecturers = async () => {
+      try {
+        setIsLoading(true);
+        const usersRef = collection(db, 'users');
+        let q;
+        
+        // If user is HoD, only show lecturers from their department
+        if (userRole === 'hod') {
+          q = query(
+            usersRef, 
+            where("role", "==", "lecturer"), 
+            where("department", "==", userDepartment),
+            where("isActive", "==", true),
+            orderBy("name")
+          );
+        } else {
+          // For admin, show all active lecturers
+          q = query(
+            usersRef, 
+            where("role", "==", "lecturer"), 
+            where("isActive", "==", true),
+            orderBy("name")
+          );
+        }
+        
+        const snapshot = await getDocs(q);
+        const lecturerData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          courseLoad: 0 // Will be updated after loading allocations
+        }));
+        setLecturers(lecturerData);
+      } catch (error) {
+        console.error("Error loading lecturers:", error);
+        toast.error("Failed to load lecturers");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadLecturers();
+  }, [userRole, userDepartment]);
   
-  // Filter unallocated courses based on user role and department
-  const unallocatedCourses = userRole === 'admin'
-    ? allUnallocatedCourses
-    : allUnallocatedCourses.filter(course => course.department === userDepartment || course.isCrossCutting);
+  // Load courses from Firestore
+  useEffect(() => {
+    const loadCourses = async () => {
+      try {
+        setIsLoading(true);
+        const coursesRef = collection(db, 'courses');
+        let q;
+        
+        // If user is HoD, only show courses from their department or cross-cutting courses
+        if (userRole === 'hod') {
+          const departmentsRef = collection(db, 'departments');
+          const deptQuery = query(departmentsRef, where("name", "==", userDepartment), where("isActive", "==", true));
+          const deptSnapshot = await getDocs(deptQuery);
+          
+          if (!deptSnapshot.empty) {
+            const departmentId = deptSnapshot.docs[0].id;
+            
+            q = query(
+              coursesRef, 
+              where("departmentId", "==", departmentId),
+              where("isActive", "==", true),
+              orderBy("name")
+            );
+          } else {
+            // If department not found, don't query courses
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // For admin, show all active courses
+          q = query(coursesRef, where("isActive", "==", true), orderBy("name"));
+        }
+        
+        const snapshot = await getDocs(q);
+        const courseData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          yearSemester: `Year ${doc.data().yearOfStudy}, Semester ${doc.data().semester}`
+        }));
+        setCourses(courseData);
+      } catch (error) {
+        console.error("Error loading courses:", error);
+        toast.error("Failed to load courses");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadCourses();
+  }, [userRole, userDepartment]);
+  
+  // Load allocations from Firestore with real-time updates
+  useEffect(() => {
+    if (lecturers.length === 0 || courses.length === 0) return;
+    
+    setIsLoading(true);
+    const allocationsRef = collection(db, 'allocations');
+    let q;
+    
+    // If user is HoD, only show allocations for courses from their department
+    if (userRole === 'hod') {
+      const departmentCourseIds = courses.map(course => course.id);
+      
+      if (departmentCourseIds.length > 0) {
+        q = query(
+          allocationsRef, 
+          where("courseId", "in", departmentCourseIds),
+          orderBy("allocatedOn", "desc")
+        );
+      } else {
+        // If no courses in department, don't query allocations
+        setIsLoading(false);
+        return;
+      }
+    } else {
+      // For admin, show all allocations
+      q = query(allocationsRef, orderBy("allocatedOn", "desc"));
+    }
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const allocationData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setAllocations(allocationData);
+      
+      // Update lecturer course loads
+      const lecturerLoads = {};
+      allocationData.forEach(allocation => {
+        if (allocation.lecturerId) {
+          lecturerLoads[allocation.lecturerId] = (lecturerLoads[allocation.lecturerId] || 0) + 1;
+        }
+      });
+      
+      setLecturers(prev => prev.map(lecturer => ({
+        ...lecturer,
+        courseLoad: lecturerLoads[lecturer.id] || 0
+      })));
+      
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error loading allocations:", error);
+      toast.error("Failed to load allocations");
+      setIsLoading(false);
+    });
+    
+    // Cleanup function
+    return () => unsubscribe();
+  }, [courses, lecturers, userRole]);
 
-  // Mock allocated courses
-  const allAllocatedCourses = [
-    { id: 1, courseId: 1, course: 'Introduction to Programming', code: 'BIT 1201', program: 'Bachelor of Business Information Technology', department: 'Business Information Technology', yearSemester: 'Year 1, Semester 1', lecturerId: 2, lecturer: 'Prof. Mary Johnson', allocatedOn: '2023-08-15', notes: 'Lecturer has previous experience with this course', isCrossCutting: true },
-    { id: 2, courseId: 2, course: 'Database Systems', code: 'CS 2104', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', yearSemester: 'Year 2, Semester 1', lecturerId: 1, lecturer: 'Dr. John Smith', allocatedOn: '2023-08-10', notes: '', isCrossCutting: false },
-    { id: 3, courseId: 3, course: 'Software Engineering', code: 'SE 3201', program: 'Bachelor of Software Engineering', department: 'Software Engineering', yearSemester: 'Year 3, Semester 2', lecturerId: 3, lecturer: 'Dr. Elizabeth Brown', allocatedOn: '2023-08-12', notes: 'Primary area of expertise', isCrossCutting: false },
-    { id: 4, courseId: 4, course: 'Web Development', code: 'CS 2302', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', yearSemester: 'Year 2, Semester 2', lecturerId: 4, lecturer: 'Jane Williams', allocatedOn: '2023-08-14', notes: '', isCrossCutting: false },
-  ];
+  // Helper function to get unallocated courses
+  const getUnallocatedCourses = () => {
+    // Get all courses that are not in allocations
+    const allocatedCourseIds = allocations.map(a => a.courseId);
+    return courses.filter(course => !allocatedCourseIds.includes(course.id));
+  };
 
   // Filter allocations based on the search query and user role
-  const filteredAllocations = allAllocatedCourses
-    .filter(allocation => {
-      // Text search filter
-      const matchesSearch = allocation.course.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        allocation.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        allocation.lecturer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        allocation.program.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      // Role-based filter
-      if (userRole === 'hod') {
-        return matchesSearch && (allocation.department === userDepartment || allocation.isCrossCutting);
-      }
-      
-      return matchesSearch;
-    });
+  const filteredAllocations = allocations.filter(allocation => {
+    // Text search filter
+    const matchesSearch = 
+      allocation.courseName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      allocation.courseCode?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      allocation.lecturerName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      allocation.programName?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    // Role-based filter
+    if (userRole === 'hod') {
+      return matchesSearch && (allocation.departmentName === userDepartment || allocation.isCrossCutting);
+    }
+    
+    return matchesSearch;
+  });
 
   const handleFormChange = (field, value) => {
+    // If changing course, update all course-related fields
+    if (field === 'courseId' && value) {
+      const selectedCourse = courses.find(c => c.id === value);
+      if (selectedCourse) {
+        setCurrentAllocation(prev => ({
+          ...prev,
+          courseId: value,
+          courseName: selectedCourse.name,
+          courseCode: selectedCourse.code,
+          courseYearSemester: selectedCourse.yearSemester,
+          departmentId: selectedCourse.departmentId,
+          departmentName: selectedCourse.departmentName,
+          programId: selectedCourse.programId,
+          programName: selectedCourse.programName
+        }));
+        return;
+      }
+    }
+    
+    // If changing lecturer, update all lecturer-related fields
+    if (field === 'lecturerId' && value) {
+      const selectedLecturer = lecturers.find(l => l.id === value);
+      if (selectedLecturer) {
+        setCurrentAllocation(prev => ({
+          ...prev,
+          lecturerId: value,
+          lecturerName: selectedLecturer.name,
+          lecturerDepartment: selectedLecturer.department
+        }));
+        return;
+      }
+    }
+    
+    // Normal field update
     setCurrentAllocation(prev => ({
       ...prev,
       [field]: value
     }));
   };
 
-  const handleAllocate = () => {
-    // In a real app, you would make an API call to add/update the allocation
-    
-    // First, validate that required fields are filled
-    if (!currentAllocation.courseId || !currentAllocation.lecturerId) {
-      alert('Please select both a course and a lecturer');
-      return;
-    }
-    
-    // For HoD role, ensure the course and lecturer belong to their department
-    if (userRole === 'hod') {
-      // Get the selected course
-      const selectedCourse = [...unallocatedCourses, ...allAllocatedCourses.map(a => ({
-        id: a.courseId,
-        department: a.department,
-        isCrossCutting: a.isCrossCutting
-      }))].find(c => c.id.toString() === currentAllocation.courseId);
+  const handleAllocate = async () => {
+    try {
+      setIsLoading(true);
       
-      // Get the selected lecturer
-      const selectedLecturer = lecturers.find(l => l.id.toString() === currentAllocation.lecturerId);
-      
-      // Check if course belongs to the HoD's department or is cross-cutting
-      if (selectedCourse && !selectedCourse.isCrossCutting && selectedCourse.department !== userDepartment) {
-        alert(`As a Head of Department, you can only allocate courses from your department (${userDepartment}) or cross-cutting courses.`);
+      // Validate required fields
+      if (!currentAllocation.courseId || !currentAllocation.lecturerId) {
+        toast.error('Please select both a course and a lecturer');
+        setIsLoading(false);
         return;
       }
       
-      // Check if lecturer belongs to the HoD's department
-      if (selectedLecturer && selectedLecturer.department !== userDepartment) {
-        alert(`As a Head of Department, you can only allocate to lecturers from your department (${userDepartment}).`);
-        return;
+      // For HoD role, ensure the course and lecturer belong to their department
+      if (userRole === 'hod') {
+        // Get the selected course
+        const selectedCourse = courses.find(c => c.id === currentAllocation.courseId);
+        
+        // Get the selected lecturer
+        const selectedLecturer = lecturers.find(l => l.id === currentAllocation.lecturerId);
+        
+        // Check if course belongs to the HoD's department or is cross-cutting
+        if (selectedCourse && !selectedCourse.isCrossCutting && selectedCourse.departmentName !== userDepartment) {
+          toast.error(`As a Head of Department, you can only allocate courses from your department (${userDepartment}) or cross-cutting courses.`);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Check if lecturer belongs to the HoD's department
+        if (selectedLecturer && selectedLecturer.department !== userDepartment) {
+          toast.error(`As a Head of Department, you can only allocate to lecturers from your department (${userDepartment}).`);
+          setIsLoading(false);
+          return;
+        }
       }
+      
+      // Create allocation data
+      const allocationData = {
+        courseId: currentAllocation.courseId,
+        lecturerId: currentAllocation.lecturerId,
+        courseName: currentAllocation.courseName,
+        courseCode: currentAllocation.courseCode,
+        courseYearSemester: currentAllocation.courseYearSemester,
+        departmentId: currentAllocation.departmentId,
+        departmentName: currentAllocation.departmentName,
+        programId: currentAllocation.programId,
+        programName: currentAllocation.programName,
+        lecturerName: currentAllocation.lecturerName,
+        lecturerDepartment: currentAllocation.lecturerDepartment,
+        notes: currentAllocation.notes,
+        updatedAt: serverTimestamp()
+      };
+      
+      if (editMode) {
+        // Update existing allocation
+        const allocationRef = doc(db, 'allocations', editAllocationId);
+        await updateDoc(allocationRef, allocationData);
+        toast.success(`Course allocation has been updated`);
+      } else {
+        // Add new allocation
+        const newAllocationRef = doc(collection(db, 'allocations'));
+        await setDoc(newAllocationRef, {
+          ...allocationData,
+          allocatedBy: user.uid,
+          allocatedOn: serverTimestamp()
+        });
+        
+        // Update the course to set lecturer
+        try {
+          const courseRef = doc(db, 'courses', currentAllocation.courseId);
+          await updateDoc(courseRef, {
+            lecturer: currentAllocation.lecturerName,
+            updatedAt: serverTimestamp()
+          });
+        } catch (error) {
+          console.error("Error updating course lecturer:", error);
+        }
+        
+        toast.success(`Course has been allocated successfully`);
+      }
+      
+      resetAndCloseModal();
+    } catch (error) {
+      console.error("Error allocating course:", error);
+      toast.error("Failed to allocate course");
+    } finally {
+      setIsLoading(false);
     }
+  };
+  
+  const handleDeleteAllocation = async () => {
+    if (!editAllocationId) return;
     
-    console.log('Allocating course:', currentAllocation);
-    
-    if (editMode) {
-      alert(`Course allocation has been updated`);
-    } else {
-      alert(`Course has been allocated successfully`);
+    try {
+      setIsDeletingAllocation(true);
+      
+      // Get allocation details to update course after deletion
+      const allocationRef = doc(db, 'allocations', editAllocationId);
+      const allocationDoc = await getDoc(allocationRef);
+      
+      if (allocationDoc.exists()) {
+        const allocationData = allocationDoc.data();
+        
+        // Delete the allocation
+        await deleteDoc(allocationRef);
+        
+        // Update course to remove lecturer
+        if (allocationData.courseId) {
+          try {
+            const courseRef = doc(db, 'courses', allocationData.courseId);
+            await updateDoc(courseRef, {
+              lecturer: 'Not Assigned',
+              updatedAt: serverTimestamp()
+            });
+          } catch (error) {
+            console.error("Error updating course lecturer:", error);
+          }
+        }
+        
+        toast.success("Course allocation has been removed");
+      }
+      
+      setShowDeleteConfirmation(false);
+      resetAndCloseModal();
+    } catch (error) {
+      console.error("Error deleting allocation:", error);
+      toast.error("Failed to remove allocation");
+    } finally {
+      setIsDeletingAllocation(false);
     }
-    
-    resetAndCloseModal();
   };
 
   const handleEditAllocation = (allocationId) => {
-    const allocationToEdit = allAllocatedCourses.find(a => a.id === allocationId);
+    const allocationToEdit = allocations.find(a => a.id === allocationId);
     if (allocationToEdit) {
       setCurrentAllocation({
-        courseId: allocationToEdit.courseId.toString(),
-        lecturerId: allocationToEdit.lecturerId.toString(),
-        notes: allocationToEdit.notes
+        courseId: allocationToEdit.courseId,
+        lecturerId: allocationToEdit.lecturerId,
+        courseName: allocationToEdit.courseName,
+        courseCode: allocationToEdit.courseCode,
+        courseYearSemester: allocationToEdit.courseYearSemester,
+        departmentId: allocationToEdit.departmentId,
+        departmentName: allocationToEdit.departmentName,
+        programId: allocationToEdit.programId,
+        programName: allocationToEdit.programName,
+        lecturerName: allocationToEdit.lecturerName,
+        lecturerDepartment: allocationToEdit.lecturerDepartment,
+        notes: allocationToEdit.notes,
+        allocatedBy: allocationToEdit.allocatedBy,
+        allocatedOn: allocationToEdit.allocatedOn
       });
       setEditMode(true);
+      setEditAllocationId(allocationId);
       setShowAllocateModal(true);
+    }
+  };
+  
+  const showDeleteAllocationConfirm = (allocationId) => {
+    const allocationToDelete = allocations.find(a => a.id === allocationId);
+    if (allocationToDelete) {
+      setEditAllocationId(allocationId);
+      setCurrentAllocation({
+        courseName: allocationToDelete.courseName,
+        courseCode: allocationToDelete.courseCode,
+        lecturerName: allocationToDelete.lecturerName
+      });
+      setShowDeleteConfirmation(true);
     }
   };
 
@@ -142,282 +451,244 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     setCurrentAllocation({
       courseId: '',
       lecturerId: '',
-      notes: ''
+      courseName: '',
+      courseCode: '',
+      courseYearSemester: '',
+      departmentId: '',
+      departmentName: '',
+      programId: '',
+      programName: '',
+      lecturerName: '',
+      lecturerDepartment: '',
+      notes: '',
+      allocatedBy: '',
+      allocatedOn: null
     });
     setEditMode(false);
+    setEditAllocationId(null);
     setShowAllocateModal(false);
   };
 
   return (
     <div className="p-6">
-      {/* Header with actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+      <div className="flex flex-col md:flex-row justify-between mb-6 space-y-4 md:space-y-0">
         <div>
-          <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-            Course Allocations
-          </h1>
-          <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
-            {userRole === 'admin' 
-              ? 'Allocate course units to lecturers across all departments'
-              : 'Allocate course units to lecturers within your department'}
+          <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Course Allocations</h1>
+          <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+            Manage course allocations for lecturers
           </p>
         </div>
         
-        <button 
-          onClick={() => setShowAllocateModal(true)}
-          className={`inline-flex items-center px-4 py-2 rounded-lg ${
-            darkMode 
-              ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
-              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-          }`}
-        >
-          <Plus className="h-5 w-5 mr-2" /> 
-          <span>Allocate Course</span>
-        </button>
-      </div>
-
-      {/* Search and filters */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <div className={`p-4 rounded-lg ${darkMode ? 'bg-emerald-900/20' : 'bg-emerald-50'} flex items-start gap-3 max-w-lg`}>
-          <div className={`p-2 rounded-full ${darkMode ? 'bg-emerald-900/30' : 'bg-emerald-100'}`}>
-            <UserCog className={`h-5 w-5 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
-          </div>
-          <div>
-            <h3 className={`font-medium ${darkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>
-              Course Allocation
-            </h3>
-            <p className={`text-sm ${darkMode ? 'text-emerald-300' : 'text-emerald-600'}`}>
-              Assign course units to qualified lecturers to balance teaching loads.
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center rounded-lg border px-3 py-1.5 min-w-[240px] ${
-            darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
-          }`}>
-            <Search className="h-4 w-4 text-gray-400 mr-2" />
-            <input 
+        <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+          <div className="relative">
+            <input
               type="text"
               placeholder="Search allocations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className={`outline-none border-none ${
-                darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
-              }`}
+              className={`pl-9 pr-4 py-2 rounded-lg w-full sm:w-64 focus:ring-2 
+                ${darkMode 
+                  ? 'bg-gray-800 border-gray-700 focus:ring-blue-600 text-white' 
+                  : 'bg-white border-gray-300 focus:ring-blue-500 text-gray-900'}`}
             />
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
+            </div>
           </div>
           
-          <button className={`p-2 rounded-lg border ${
-            darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-300 text-gray-600'
-          }`}>
-            <Filter className="h-4 w-4" />
+          <button
+            onClick={() => { setEditMode(false); setShowAllocateModal(true); }}
+            className={`flex items-center justify-center px-4 py-2 rounded-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${userRole !== 'admin' && userRole !== 'hod' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            disabled={userRole !== 'admin' && userRole !== 'hod'}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Allocate Course
           </button>
         </div>
       </div>
-
-      {/* Unallocated courses section */}
-      <div className="mb-8">
-        <h2 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-          Unallocated Courses
-        </h2>
-        
-        <div className={`border rounded-lg overflow-hidden ${
-          darkMode ? 'border-gray-700' : 'border-gray-200'
-        }`}>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className={`text-xs uppercase ${
-                darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-600'
-              }`}>
-                <tr>
-                  <th className="px-4 py-3 text-left">Course Code</th>
-                  <th className="px-4 py-3 text-left">Course Name</th>
-                  <th className="px-4 py-3 text-left">Program</th>
-                  <th className="px-4 py-3 text-center">Year/Semester</th>
-                  <th className="px-4 py-3 text-center">Credits</th>
-                  <th className="px-4 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
-                {unallocatedCourses.length > 0 ? (
-                  unallocatedCourses.map(course => (
-                    <tr key={course.id} className={`${
-                      darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
-                    }`}>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          darkMode ? 'bg-amber-900/20 text-amber-400' : 'bg-amber-100 text-amber-700'
+      
+      {isLoading && courses.length === 0 && (
+        <div className="flex flex-col items-center justify-center p-8">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+          <p className={`text-lg ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Loading courses and allocations...</p>
+        </div>
+      )}
+      
+      {!isLoading && courses.length === 0 && (
+        <div className="flex flex-col items-center justify-center p-8 bg-blue-50 rounded-lg dark:bg-gray-800">
+          <div className="p-3 rounded-full bg-blue-100 dark:bg-blue-900 mb-4">
+            <BookOpen className="h-8 w-8 text-blue-600 dark:text-blue-400" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white">No Courses Available</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 text-center mt-1 mb-3">
+            {userRole === 'admin' 
+              ? "There are no courses in the system to allocate." 
+              : `There are no courses in your department (${userDepartment}) to allocate.`}
+          </p>
+        </div>
+      )}
+      
+      {!isLoading && courses.length > 0 && (
+        <>
+          {/* Unallocated Courses Section */}
+          <div className="mb-8">
+            <h2 className={`text-xl font-semibold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+              Unallocated Courses
+            </h2>
+            
+            {getUnallocatedCourses().length === 0 ? (
+              <div className={`p-4 rounded-lg ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-50 text-gray-600'}`}>
+                <p>All courses have been allocated to lecturers.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className={`min-w-full ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                  <thead className={`text-xs uppercase ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-50 text-gray-700'}`}>
+                    <tr>
+                      <th scope="col" className="px-4 py-3 text-left">Course</th>
+                      <th scope="col" className="px-4 py-3 text-left">Program</th>
+                      <th scope="col" className="px-4 py-3 text-left">Year / Semester</th>
+                      <th scope="col" className="px-4 py-3 text-left">Department</th>
+                      <th scope="col" className="px-4 py-3 text-center">Credit Units</th>
+                      <th scope="col" className="px-4 py-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                    {getUnallocatedCourses().length > 0 ? (
+                      getUnallocatedCourses().map(course => (
+                        <tr key={course.id} className={`${
+                          darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
                         }`}>
-                          {course.code}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center">
-                          <BookOpen className={`h-4 w-4 mr-2 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
-                          <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                            {course.name}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                          {course.program}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                          {course.yearSemester}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`font-medium ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                          {course.creditUnits}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button 
-                          onClick={() => {
-                            setCurrentAllocation(prev => ({ ...prev, courseId: course.id.toString() }));
-                            setShowAllocateModal(true);
-                          }}
-                          className={`px-3 py-1 rounded-md text-xs ${
-                            darkMode 
-                              ? 'bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40' 
-                              : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                          }`}
-                        >
-                          Allocate
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
-                      All courses have been allocated to lecturers
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${darkMode ? 'bg-blue-900/20 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
+                                <BookOpen className="h-4 w-4" />
+                              </div>
+                              <div className="ml-3">
+                                <div className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{course.name}</div>
+                                <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{course.code}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">{course.programName}</td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">{course.yearSemester}</td>
+                          <td className="px-4 py-3 text-sm whitespace-nowrap">{course.departmentName}</td>
+                          <td className="px-4 py-3 text-sm text-center">{course.creditUnits}</td>
+                          <td className="px-4 py-3 text-sm text-center">
+                            <button
+                              onClick={() => {
+                                setEditMode(false);
+                                handleFormChange('courseId', course.id);
+                                setShowAllocateModal(true);
+                              }}
+                              className={`px-3 py-1 rounded-md ${
+                                darkMode ? 'bg-blue-900/20 text-blue-400 hover:bg-blue-900/30' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                              }`}
+                            >
+                              Allocate
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-3 text-center text-sm">
+                          No unallocated courses found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
-
-      {/* Allocated courses section */}
-      <div>
-        <h2 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-          Current Allocations
-        </h2>
-        
-        <div className={`border rounded-lg overflow-hidden ${
-          darkMode ? 'border-gray-700' : 'border-gray-200'
-        }`}>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className={`text-xs uppercase ${
-                darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-600'
-              }`}>
-                <tr>
-                  <th className="px-4 py-3 text-left">Course</th>
-                  <th className="px-4 py-3 text-left">Program</th>
-                  <th className="px-4 py-3 text-left">Lecturer</th>
-                  <th className="px-4 py-3 text-center">Allocated On</th>
-                  <th className="px-4 py-3 text-center">Notes</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
-                {filteredAllocations.length > 0 ? (
-                  filteredAllocations.map(allocation => (
-                    <tr key={allocation.id} className={`${
-                      darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
-                    }`}>
-                      <td className="px-4 py-3">
-                        <div>
+          
+          {/* Current Allocations Section */}
+          <div>
+            <h2 className={`text-xl font-semibold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+              Current Allocations
+            </h2>
+            
+            {filteredAllocations.length === 0 ? (
+              <div className={`p-4 rounded-lg ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-50 text-gray-600'}`}>
+                <p>No allocations found. Use the "Allocate Course" button to assign courses to lecturers.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className={`min-w-full ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                  <thead className={`text-xs uppercase ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-50 text-gray-700'}`}>
+                    <tr>
+                      <th scope="col" className="px-4 py-3 text-left">Course</th>
+                      <th scope="col" className="px-4 py-3 text-left">Lecturer</th>
+                      <th scope="col" className="px-4 py-3 text-left">Allocated On</th>
+                      <th scope="col" className="px-4 py-3 text-left">Notes</th>
+                      <th scope="col" className="px-4 py-3 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
+                    {filteredAllocations.map(allocation => (
+                      <tr key={allocation.id} className={`${
+                        darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
+                      }`}>
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex items-center">
-                            <BookOpen className={`h-4 w-4 mr-2 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
-                            <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                              {allocation.course}
-                            </span>
+                            <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${darkMode ? 'bg-blue-900/20 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
+                              <BookOpen className="h-4 w-4" />
+                            </div>
+                            <div className="ml-3">
+                              <div className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{allocation.courseName}</div>
+                              <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{allocation.courseCode}</div>
+                            </div>
                           </div>
-                          <div className="mt-1">
-                            <span className={`px-2 py-0.5 rounded-full text-xs ${
-                              darkMode ? 'bg-amber-900/20 text-amber-400' : 'bg-amber-100 text-amber-700'
-                            }`}>
-                              {allocation.code}
-                            </span>
-                            <span className={`ml-1 text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                              {allocation.yearSemester}
-                            </span>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${darkMode ? 'bg-yellow-900/20 text-yellow-400' : 'bg-yellow-100 text-yellow-600'}`}>
+                              <User className="h-4 w-4" />
+                            </div>
+                            <div className="ml-3">
+                              <div className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>{allocation.lecturerName}</div>
+                              <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{allocation.lecturerDepartment}</div>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                          {allocation.program}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center">
-                          <div className={`p-1 rounded-full ${darkMode ? 'bg-emerald-900/30' : 'bg-emerald-100'} mr-2`}>
-                            <User className={`h-4 w-4 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {allocation.allocatedOn ? new Date(allocation.allocatedOn.seconds * 1000).toLocaleDateString() : 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <div className="max-w-xs truncate">{allocation.notes || 'No notes provided'}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-center">
+                          <div className="flex justify-center space-x-1">
+                            <button 
+                              onClick={() => handleEditAllocation(allocation.id)}
+                              className={`p-1.5 rounded-lg ${
+                                darkMode ? 'hover:bg-gray-700 text-gray-300' : 'hover:bg-gray-200 text-gray-600'
+                              }`}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                            <button 
+                              onClick={() => showDeleteAllocationConfirm(allocation.id)}
+                              className={`p-1.5 rounded-lg ${
+                                darkMode ? 'hover:bg-red-900/20 text-red-400' : 'hover:bg-red-100 text-red-600'
+                              }`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           </div>
-                          <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
-                            {allocation.lecturer}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {allocation.allocatedOn}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {allocation.notes ? (
-                          <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                            {allocation.notes.length > 20 
-                              ? `${allocation.notes.substring(0, 20)}...` 
-                              : allocation.notes}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-gray-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end items-center space-x-2">
-                          <button 
-                            onClick={() => handleEditAllocation(allocation.id)}
-                            className={`p-1.5 rounded-lg ${
-                              darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-600'
-                            }`}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button className={`p-1.5 rounded-lg ${
-                            darkMode ? 'hover:bg-red-900/20 text-red-400' : 'hover:bg-red-100 text-red-600'
-                          }`}>
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
-                      No allocations found matching your criteria
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
-      {/* Allocate course modal */}
+      {/* Allocate Course Modal */}
       {showAllocateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
@@ -432,7 +703,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
               <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
                 <div className="flex items-center justify-between">
                   <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    {editMode ? 'Edit Course Allocation' : 'Allocate Course to Lecturer'}
+                    {editMode ? 'Edit Course Allocation' : 'Allocate New Course'}
                   </h3>
                   <button 
                     onClick={resetAndCloseModal}
@@ -448,41 +719,53 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
               {/* Modal body */}
               <div className="px-6 py-4">
                 <div className="space-y-4">
+                  {/* Course Selection */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">Course</label>
-                    <select 
+                    <label htmlFor="course" className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Course <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="course"
                       value={currentAllocation.courseId}
                       onChange={(e) => handleFormChange('courseId', e.target.value)}
-                      className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                      className={`mt-1 block w-full py-2 px-3 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                        darkMode 
+                          ? 'bg-gray-700 border-gray-600 text-white' 
+                          : 'bg-white border-gray-300 text-gray-900'
                       }`}
-                      disabled={editMode}
+                      required
                     >
                       <option value="">Select Course</option>
-                      {unallocatedCourses.map(course => (
+                      {getUnallocatedCourses().map(course => (
                         <option key={course.id} value={course.id}>
                           {course.code} - {course.name} ({course.yearSemester})
                         </option>
                       ))}
-                      {editMode && allAllocatedCourses
-                        .filter(a => a.courseId.toString() === currentAllocation.courseId)
+                      {editMode && allocations
+                        .filter(a => a.id === editAllocationId)
                         .map(a => (
                           <option key={a.courseId} value={a.courseId}>
-                            {a.code} - {a.course} ({a.yearSemester})
+                            {a.courseCode} - {a.courseName} ({a.courseYearSemester})
                           </option>
-                        ))
-                      }
+                        ))}
                     </select>
                   </div>
                   
+                  {/* Lecturer Selection */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">Lecturer</label>
-                    <select 
+                    <label htmlFor="lecturer" className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Lecturer <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      id="lecturer"
                       value={currentAllocation.lecturerId}
                       onChange={(e) => handleFormChange('lecturerId', e.target.value)}
-                      className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
+                      className={`mt-1 block w-full py-2 px-3 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                        darkMode 
+                          ? 'bg-gray-700 border-gray-600 text-white' 
+                          : 'bg-white border-gray-300 text-gray-900'
                       }`}
+                      required
                     >
                       <option value="">Select Lecturer</option>
                       {lecturers.map(lecturer => (
@@ -493,31 +776,33 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
                     </select>
                   </div>
                   
+                  {/* Notes */}
                   <div>
-                    <label className="block text-sm font-medium mb-1">Notes (Optional)</label>
-                    <textarea 
-                      value={currentAllocation.notes}
+                    <label htmlFor="notes" className={`block text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Notes
+                    </label>
+                    <textarea
+                      id="notes"
+                      value={currentAllocation.notes || ''}
                       onChange={(e) => handleFormChange('notes', e.target.value)}
-                      className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
-                      }`}
-                      placeholder="Add any notes about this allocation"
                       rows={3}
-                    />
+                      className={`mt-1 block w-full py-2 px-3 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                        darkMode 
+                          ? 'bg-gray-700 border-gray-600 text-white' 
+                          : 'bg-white border-gray-300 text-gray-900'
+                      }`}
+                      placeholder="Add any special notes about this allocation (optional)"
+                    ></textarea>
                   </div>
-
-                  <div className={`p-3 rounded-lg ${
-                    darkMode ? 'bg-blue-900/20 border border-blue-800/30' : 'bg-blue-50 border border-blue-100'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      <CheckSquare className={`h-5 w-5 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
-                      <span className={`text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                        Allocation Guidelines
-                      </span>
-                    </div>
-                    <p className={`text-xs mt-1 ${darkMode ? 'text-blue-300' : 'text-blue-600'}`}>
-                      Ensure lecturers are assigned courses that match their expertise. The recommended course load is 2-3 courses per lecturer per semester.
-                    </p>
+                  
+                  {/* Allocation Guidelines */}
+                  <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    <h4 className="font-semibold mb-1">Allocation Guidelines:</h4>
+                    <ul className="list-disc pl-5 space-y-1">
+                      <li>Ensure lecturers are qualified for the courses they are allocated.</li>
+                      <li>Consider lecturer workload when making allocations.</li>
+                      <li>HoDs can only allocate to lecturers within their department.</li>
+                    </ul>
                   </div>
                 </div>
               </div>
@@ -527,17 +812,109 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
                 <button 
                   onClick={resetAndCloseModal}
                   className={`px-4 py-2 rounded-md text-sm font-medium ${
-                    darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                   }`}
                 >
                   Cancel
                 </button>
-                
                 <button 
                   onClick={handleAllocate}
-                  className={`px-4 py-2 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700`}
+                  disabled={isLoading}
+                  className={`px-4 py-2 rounded-md text-sm font-medium flex items-center ${
+                    isLoading 
+                      ? 'bg-blue-500 cursor-not-allowed' 
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  } text-white`}
                 >
+                  {isLoading && (
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
                   {editMode ? 'Update Allocation' : 'Allocate Course'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete allocation confirmation modal */}
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" onClick={() => setShowDeleteConfirmation(false)}>
+              <div className="absolute inset-0 bg-black opacity-50"></div>
+            </div>
+
+            <div className={`inline-block align-bottom rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full ${
+              darkMode ? 'bg-gray-800' : 'bg-white'
+            }`}>
+              {/* Modal header */}
+              <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    Confirm Deletion
+                  </h3>
+                  <button 
+                    onClick={() => setShowDeleteConfirmation(false)}
+                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-6 w-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Modal body */}
+              <div className="px-6 py-4">
+                <div className="space-y-4">
+                  <p className={darkMode ? 'text-gray-300' : 'text-gray-700'}>
+                    Are you sure you want to delete this allocation? This action cannot be undone.
+                  </p>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Course</label>
+                    <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {currentAllocation.courseName} ({currentAllocation.courseCode})
+                    </span>
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Lecturer</label>
+                    <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {currentAllocation.lecturerName}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Modal footer */}
+              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-end gap-2`}>
+                <button 
+                  onClick={() => setShowDeleteConfirmation(false)}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDeleteAllocation}
+                  disabled={isDeletingAllocation}
+                  className={`px-4 py-2 rounded-md text-sm font-medium flex items-center ${
+                    isDeletingAllocation 
+                      ? 'bg-red-500 cursor-not-allowed' 
+                      : 'bg-red-600 hover:bg-red-700'
+                  } text-white`}
+                >
+                  {isDeletingAllocation && (
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  Delete
                 </button>
               </div>
             </div>

@@ -13,28 +13,39 @@ const LoginPage = ({ darkMode, toggleDarkMode }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Mock credentials for demo purposes
-  const VALID_EMAIL = 'admin@mmu.ac.ug';
-  const VALID_PASSWORD = 'admin123';
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      if (email === VALID_EMAIL && password === VALID_PASSWORD) {
-        // Use the login function from auth context
-        login(email, 'admin');
-        
-        // Redirect to dashboard
-        navigate('/dashboard');
-      } else {
-        setError('Invalid email or password');
+    try {
+      await login(email, password);
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Login error:', error.code, error.message);
+      let errorMessage = 'Invalid email or password';
+      
+      // Handle specific Firebase error codes
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        errorMessage = 'Invalid email or password. Please try using the default credentials: admin@mmu.ac.ug / admin123';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many failed login attempts. Please try again later.';
+      } else if (error.code === 'auth/network-request-failed') {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.code === 'auth/user-disabled') {
+        errorMessage = 'This account has been disabled. Please contact the administrator.';
       }
+      
+      setError(errorMessage);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
+  };
+
+  // Add a helper to set default credentials for quick login
+  const setDefaultCredentials = () => {
+    setEmail('admin@mmu.ac.ug');
+    setPassword('admin123');
   };
 
   return (
@@ -153,9 +164,13 @@ const LoginPage = ({ darkMode, toggleDarkMode }) => {
               </label>
             </div>
 
-            <a href="#" className={`text-sm font-medium text-indigo-600 hover:text-indigo-500`}>
-              Forgot password?
-            </a>
+            <button 
+              type="button"
+              onClick={setDefaultCredentials}
+              className={`text-sm font-medium text-indigo-600 hover:text-indigo-500`}
+            >
+              Use Default Login
+            </button>
           </div>
 
           <button
@@ -176,9 +191,21 @@ const LoginPage = ({ darkMode, toggleDarkMode }) => {
           </button>
         </form>
 
+        <div className={`mt-6 text-center p-3 rounded-lg ${
+          darkMode 
+            ? 'bg-blue-900/20 border border-blue-800/30' 
+            : 'bg-blue-50 border border-blue-100'
+        }`}>
+          <p className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-700'}`}>
+            <strong>Default Admin Login:</strong><br/>
+            Email: admin@mmu.ac.ug<br/>
+            Password: admin123
+          </p>
+        </div>
+
         <div className="mt-8 text-center">
           <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-            Don't have an account? Contact the system administrator.
+            Don&apos;t have an account? Contact the system administrator.
           </p>
         </div>
 

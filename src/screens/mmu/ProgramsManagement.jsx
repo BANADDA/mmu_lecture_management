@@ -1,4 +1,18 @@
 import {
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where
+} from 'firebase/firestore';
+import {
     BookMarked,
     BookOpen,
     Building,
@@ -11,9 +25,15 @@ import {
     Users
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { toast } from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { db } from '../../firebase/firebase';
 
 const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Science' }) => {
+  const { user } = useAuth();
+  
+  // State variables for program management
   const [showAddProgramModal, setShowAddProgramModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentProgram, setCurrentProgram] = useState({
@@ -21,66 +41,263 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
     code: '',
     duration: '4',
     departmentId: '',
-    isApproved: true
+    departmentName: '',
+    isActive: true,
+    createdBy: '',
+    createdAt: null,
+    updatedAt: null
   });
   const [editMode, setEditMode] = useState(false);
+  const [editProgramId, setEditProgramId] = useState(null);
   const [selectedProgram, setSelectedProgram] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [deletingProgram, setDeletingProgram] = useState(false);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  
+  // State for programs, departments, and courses
+  const [programs, setPrograms] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [programCourses, setProgramCourses] = useState([]);
 
-  // Mock departments for dropdown - only used by admin
-  const departments = [
-    { id: 1, name: 'Computer Science', hod: 'Dr. John Smith', faculty: 'Computing and Engineering' },
-    { id: 2, name: 'Business Information Technology', hod: 'Prof. Mary Johnson', faculty: 'Computing and Engineering' },
-    { id: 3, name: 'Software Engineering', hod: 'Dr. Elizabeth Brown', faculty: 'Computing and Engineering' },
-    { id: 4, name: 'Business Administration', hod: 'Dr. Robert Wilson', faculty: 'Business and Management' },
-    { id: 5, name: 'Accounting and Finance', hod: 'Prof. Sarah Miller', faculty: 'Business and Management' },
-  ];
-
-  // Mock programs data
-  const mockPrograms = [
-    { id: 1, name: 'Bachelor of Science in Computer Science', code: 'BSc. CS', department: 'Computer Science', departmentId: 1, duration: 4, students: 245, courses: 38, isApproved: true, yearStarted: 2018 },
-    { id: 2, name: 'Bachelor of Business Information Technology', code: 'BBIT', department: 'Business Information Technology', departmentId: 2, duration: 4, students: 180, courses: 32, isApproved: true, yearStarted: 2019 },
-    { id: 3, name: 'Master of Science in Computer Science', code: 'MSc. CS', department: 'Computer Science', departmentId: 1, duration: 2, students: 45, courses: 12, isApproved: true, yearStarted: 2020 },
-    { id: 4, name: 'Diploma in Computer Science', code: 'DCS', department: 'Computer Science', departmentId: 1, duration: 2, students: 75, courses: 18, isApproved: true, yearStarted: 2021 },
-    { id: 5, name: 'Bachelor of Software Engineering', code: 'BSE', department: 'Software Engineering', departmentId: 3, duration: 4, students: 120, courses: 36, isApproved: true, yearStarted: 2019 },
-    { id: 6, name: 'Bachelor of Business Administration', code: 'BBA', department: 'Business Administration', departmentId: 4, duration: 3, students: 210, courses: 28, isApproved: true, yearStarted: 2017 },
-    { id: 7, name: 'Higher Diploma in Networking', code: 'HDN', department: 'Computer Science', departmentId: 1, duration: 1, students: 30, courses: 10, isApproved: false, yearStarted: 2022 },
-  ];
-
-  // Mock course units for selected program view
-  const mockCourseUnits = [
-    { id: 1, name: 'Introduction to Programming', code: 'BIT 1201', creditUnits: 4, yearOfStudy: 1, semester: 2, lecturer: 'Prof. Mary Johnson' },
-    { id: 2, name: 'Database Systems', code: 'CS 2104', creditUnits: 3, yearOfStudy: 2, semester: 1, lecturer: 'Dr. John Smith' },
-    { id: 3, name: 'Software Engineering', code: 'SE 3201', creditUnits: 4, yearOfStudy: 3, semester: 2, lecturer: 'Dr. Elizabeth Brown' },
-    { id: 4, name: 'Web Development', code: 'CS 2302', creditUnits: 3, yearOfStudy: 2, semester: 3, lecturer: 'Jane Williams' },
-    { id: 5, name: 'Operating Systems', code: 'CS 3105', creditUnits: 3, yearOfStudy: 3, semester: 1, lecturer: 'Not Assigned' },
-    { id: 6, name: 'Computer Networks', code: 'CS 3201', creditUnits: 4, yearOfStudy: 3, semester: 2, lecturer: 'Dr. John Smith' },
-    { id: 7, name: 'Advanced Programming', code: 'CS 2203', creditUnits: 4, yearOfStudy: 2, semester: 2, lecturer: 'Not Assigned' },
-    { id: 8, name: 'Artificial Intelligence', code: 'CS 4101', creditUnits: 3, yearOfStudy: 4, semester: 1, lecturer: 'Dr. Michael Wilson' },
-  ];
-
-  // Filter programs based on search query and user role
-  const filteredPrograms = mockPrograms.filter(program => {
-    // Text search filter
-    const matchesSearch = program.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      program.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      program.department.toLowerCase().includes(searchQuery.toLowerCase());
+  // Firebase functions for program management
+  // Function to load all departments from Firestore
+  useEffect(() => {
+    const loadDepartments = async () => {
+      try {
+        const departmentsRef = collection(db, 'departments');
+        const q = query(departmentsRef, where("isActive", "==", true), orderBy("name"));
+        
+        const snapshot = await getDocs(q);
+        const departmentData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setDepartments(departmentData);
+      } catch (error) {
+        console.error("Error loading departments:", error);
+        toast.error("Failed to load departments");
+      }
+    };
     
-    // Role-based filter: HoD can only see their department's programs
+    loadDepartments();
+  }, []);
+  
+  // Function to load all programs from Firestore with real-time updates
+  useEffect(() => {
+    setIsLoading(true);
+    
+    let q;
+    const programsRef = collection(db, 'programs');
+    
+    // If user is HoD, only show programs from their department
     if (userRole === 'hod') {
-      return matchesSearch && program.department === userDepartment;
+      const userDepartmentObj = departments.find(dept => dept.name === userDepartment);
+      const userDepartmentId = userDepartmentObj ? userDepartmentObj.id : null;
+      
+      if (userDepartmentId) {
+        q = query(programsRef, where("departmentId", "==", userDepartmentId), orderBy("createdAt", "desc"));
+      } else {
+        // If department ID not found, don't query yet
+        setIsLoading(false);
+        return;
+      }
+    } else {
+      // For admin, show all programs
+      q = query(programsRef, orderBy("createdAt", "desc"));
     }
     
-    return matchesSearch;
-  });
-
-  // Filter courses that belong to the selected program
-  const getProgramCourses = (programId) => {
-    // In a real app, this would fetch from database or filter existing data
-    return mockCourseUnits.filter((_, index) => {
-      // For mock data, use a predictable pattern based on program ID
-      return index % mockPrograms.length === (programId - 1) % mockPrograms.length || 
-             index % (mockPrograms.length + 1) === (programId - 1) % (mockPrograms.length + 1);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const programData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setPrograms(programData);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error loading programs:", error);
+      toast.error("Failed to load programs");
+      setIsLoading(false);
     });
+    
+    // Cleanup function
+    return () => unsubscribe();
+  }, [userRole, userDepartment, departments]);
+  
+  // Function to load courses for a specific program
+  const loadProgramCourses = async (programId) => {
+    try {
+      setIsLoading(true);
+      const coursesRef = collection(db, 'courses');
+      const q = query(coursesRef, where("programId", "==", programId), orderBy("yearOfStudy"), orderBy("semester"));
+      
+      const snapshot = await getDocs(q);
+      const courseData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setProgramCourses(courseData);
+    } catch (error) {
+      console.error("Error loading courses:", error);
+      toast.error("Failed to load program courses");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Function to add a new program
+  const handleAddProgram = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Validate required fields
+      if (!currentProgram.name || !currentProgram.code || !currentProgram.duration) {
+        toast.error("Please fill in all required fields");
+        setIsLoading(false);
+        return;
+      }
+      
+      // For HoD, automatically set department
+      let departmentId = currentProgram.departmentId;
+      let departmentName = '';
+      
+      if (userRole === 'hod') {
+        const userDepartmentObj = departments.find(dept => dept.name === userDepartment);
+        if (userDepartmentObj) {
+          departmentId = userDepartmentObj.id;
+          departmentName = userDepartmentObj.name;
+        } else {
+          toast.error("Department not found. Please contact admin.");
+          setIsLoading(false);
+          return;
+        }
+      } else {
+        // For admin, get department name from selected departmentId
+        if (!departmentId) {
+          toast.error("Please select a department");
+          setIsLoading(false);
+          return;
+        }
+        const selectedDept = departments.find(dept => dept.id === departmentId);
+        departmentName = selectedDept ? selectedDept.name : '';
+      }
+      
+      // Create or update program object
+      const programData = {
+        name: currentProgram.name,
+        code: currentProgram.code.toUpperCase(),
+        duration: parseInt(currentProgram.duration),
+        departmentId: departmentId,
+        departmentName: departmentName,
+        isActive: currentProgram.isActive,
+        updatedAt: serverTimestamp()
+      };
+      
+      if (editMode) {
+        // Update existing program
+        const programRef = doc(db, 'programs', editProgramId);
+        await updateDoc(programRef, programData);
+        toast.success(`Program ${currentProgram.name} has been updated`);
+      } else {
+        // Add new program
+        const newProgramRef = doc(collection(db, 'programs'));
+        await setDoc(newProgramRef, {
+          ...programData,
+          createdBy: user.uid,
+          createdAt: serverTimestamp(),
+          students: 0,
+          courses: 0,
+          yearStarted: new Date().getFullYear()
+        });
+        toast.success(`Program ${currentProgram.name} has been added successfully`);
+        
+        // Update department to increment programs count
+        try {
+          const deptRef = doc(db, 'departments', departmentId);
+          const deptDoc = await getDoc(deptRef);
+          if (deptDoc.exists()) {
+            const currentPrograms = deptDoc.data().programs || 0;
+            await updateDoc(deptRef, {
+              programs: currentPrograms + 1,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (error) {
+          console.error("Error updating department program count:", error);
+        }
+      }
+      
+      resetAndCloseModal();
+    } catch (error) {
+      console.error("Error adding/updating program:", error);
+      toast.error("Failed to save program");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Function to delete a program
+  const handleDeleteProgram = async () => {
+    if (!editProgramId) return;
+    
+    try {
+      setDeletingProgram(true);
+      
+      // Get program details to update department count after deletion
+      const programRef = doc(db, 'programs', editProgramId);
+      const programDoc = await getDoc(programRef);
+      
+      if (programDoc.exists()) {
+        const programData = programDoc.data();
+        
+        // Delete the program
+        await deleteDoc(programRef);
+        
+        // Update department to decrement programs count
+        if (programData.departmentId) {
+          try {
+            const deptRef = doc(db, 'departments', programData.departmentId);
+            const deptDoc = await getDoc(deptRef);
+            if (deptDoc.exists()) {
+              const currentPrograms = deptDoc.data().programs || 0;
+              if (currentPrograms > 0) {
+                await updateDoc(deptRef, {
+                  programs: currentPrograms - 1,
+                  updatedAt: serverTimestamp()
+                });
+              }
+            }
+          } catch (error) {
+            console.error("Error updating department program count:", error);
+          }
+        }
+        
+        toast.success("Program has been deleted");
+      }
+      
+      resetAndCloseModal();
+      setShowDeleteConfirmation(false);
+    } catch (error) {
+      console.error("Error deleting program:", error);
+      toast.error("Failed to delete program");
+    } finally {
+      setDeletingProgram(false);
+    }
+  };
+  
+  // Function to toggle program active status
+  const toggleProgramStatus = async (programId, currentStatus) => {
+    try {
+      const programRef = doc(db, 'programs', programId);
+      await updateDoc(programRef, {
+        isActive: !currentStatus,
+        updatedAt: serverTimestamp()
+      });
+      
+      toast.success(`Program ${currentStatus ? 'deactivated' : 'activated'} successfully`);
+    } catch (error) {
+      console.error("Error toggling program status:", error);
+      toast.error("Failed to update program status");
+    }
   };
 
   const handleFormChange = (field, value) => {
@@ -90,36 +307,28 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
     }));
   };
 
-  const handleAddProgram = () => {
-    // In a real app, you would make an API call to add the program
-    console.log('Adding/updating program:', currentProgram);
-    
-    if (editMode) {
-      alert(`Program ${currentProgram.name} has been updated`);
-    } else {
-      alert(`Program ${currentProgram.name} has been added successfully`);
-    }
-    
-    resetAndCloseModal();
-  };
-
   const handleEditProgram = (programId) => {
-    const programToEdit = mockPrograms.find(program => program.id === programId);
+    const programToEdit = programs.find(program => program.id === programId);
     if (programToEdit) {
       setCurrentProgram({
         name: programToEdit.name,
         code: programToEdit.code,
         duration: programToEdit.duration.toString(),
         departmentId: programToEdit.departmentId.toString(),
-        isApproved: programToEdit.isApproved
+        departmentName: programToEdit.departmentName,
+        isActive: programToEdit.isActive,
+        createdBy: programToEdit.createdBy,
+        createdAt: programToEdit.createdAt,
+        updatedAt: programToEdit.updatedAt
       });
       setEditMode(true);
+      setEditProgramId(programId);
       setShowAddProgramModal(true);
     }
   };
   
   const handleViewProgram = (programId) => {
-    const program = mockPrograms.find(prog => prog.id === programId);
+    const program = programs.find(prog => prog.id === programId);
     setSelectedProgram(program);
   };
   
@@ -133,9 +342,14 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
       code: '',
       duration: '4',
       departmentId: '',
-      isApproved: true
+      departmentName: '',
+      isActive: true,
+      createdBy: '',
+      createdAt: null,
+      updatedAt: null
     });
     setEditMode(false);
+    setEditProgramId(null);
     setShowAddProgramModal(false);
   };
 
@@ -186,7 +400,7 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
                   <div className="flex items-center mt-1">
                     <Building className={`h-4 w-4 mr-2 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
                     <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                      {selectedProgram.department}
+                      {selectedProgram.departmentName}
                     </span>
                   </div>
                 </div>
@@ -203,7 +417,7 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
 
               <div className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
                 <p>This program was established in {selectedProgram.yearStarted} and is currently
-                {selectedProgram.isApproved ? ' approved' : ' not approved'}. It has a total of {selectedProgram.courses} courses
+                {selectedProgram.isActive ? ' active' : ' not active'}. It has a total of {selectedProgram.courses} courses
                 distributed across {selectedProgram.duration * 2} semesters.</p>
               </div>
             </div>
@@ -231,11 +445,11 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
                   <div className="flex justify-between items-center">
                     <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Status</span>
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      selectedProgram.isApproved
+                      selectedProgram.isActive
                         ? (darkMode ? 'bg-green-900/20 text-green-400' : 'bg-green-100 text-green-700')
                         : (darkMode ? 'bg-yellow-900/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
                     }`}>
-                      {selectedProgram.isApproved ? 'Active' : 'Inactive'}
+                      {selectedProgram.isActive ? 'Active' : 'Inactive'}
                     </span>
                   </div>
                 </div>
@@ -279,7 +493,7 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
                 </tr>
               </thead>
               <tbody className={`divide-y ${darkMode ? 'divide-gray-700' : 'divide-gray-200'}`}>
-                {getProgramCourses(selectedProgram.id).map(course => (
+                {programCourses.map(course => (
                   <tr key={course.id} className={`${
                     darkMode ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
                   }`}>
@@ -409,7 +623,7 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
 
       {/* Programs grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 px-4">
-        {filteredPrograms.map(program => (
+        {programs.map(program => (
           <div 
             key={program.id} 
             className={`rounded-lg overflow-hidden ${
@@ -424,14 +638,14 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
                   <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
                     {program.code}
                   </h3>
-                  <p className="text-sm text-gray-500 mt-1">{program.department}</p>
+                  <p className="text-sm text-gray-500 mt-1">{program.departmentName}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  program.isApproved
+                  program.isActive
                     ? 'bg-green-900/20 text-green-500 border border-green-700/20' 
                     : 'bg-yellow-900/20 text-yellow-500 border border-yellow-700/20'
                 }`}>
-                  {program.isApproved ? 'Active' : 'Inactive'}
+                  {program.isActive ? 'Active' : 'Inactive'}
                 </div>
               </div>
 
@@ -569,13 +783,13 @@ const ProgramsManagement = ({ darkMode, userRole, userDepartment = 'Computer Sci
                   <div className="flex items-center">
                     <input 
                       type="checkbox" 
-                      id="isApproved"
-                      checked={currentProgram.isApproved}
-                      onChange={(e) => handleFormChange('isApproved', e.target.checked)}
+                      id="isActive"
+                      checked={currentProgram.isActive}
+                      onChange={(e) => handleFormChange('isActive', e.target.checked)}
                       className="mr-2"
                     />
-                    <label htmlFor="isApproved" className="text-sm">
-                      Program is approved
+                    <label htmlFor="isActive" className="text-sm">
+                      Program is active
                     </label>
                   </div>
                 </div>

@@ -1,69 +1,192 @@
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import {
-    BookOpen,
-    Edit,
-    Filter,
-    MoreHorizontal,
-    Plus,
-    Search,
-    Users
+  BookOpen,
+  Building,
+  CheckCircle,
+  Edit,
+  Filter,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { toast } from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { db } from '../../firebase/firebase';
 
 const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Science' }) => {
+  const { user } = useAuth();
+  
+  // State variables for course management
   const [showAddCourseModal, setShowAddCourseModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState('all');
+  const [departments, setDepartments] = useState([]);
   const [currentCourse, setCurrentCourse] = useState({
     name: '',
     code: '',
     creditUnits: '3',
     programId: '',
+    programName: '',
+    departmentId: '',
+    departmentName: '',
     yearOfStudy: '1',
     semester: '1',
-    isApproved: true,
-    isCrossCutting: false
+    courseNumber: '01',
+    isActive: true,
+    isCrossCutting: false,
+    createdBy: '',
+    createdAt: null,
+    updatedAt: null
   });
   const [editMode, setEditMode] = useState(false);
+  const [editCourseId, setEditCourseId] = useState(null);
   const [selectedCourse, setSelectedCourse] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+  const [deletingCourse, setDeletingCourse] = useState(false);
+  
+  // State for courses and programs
+  const [courses, setCourses] = useState([]);
+  const [programs, setPrograms] = useState([]);
 
-  // Get programs based on user role
-  // Admin can see all programs, HoD only sees their department's programs
-  const allPrograms = [
-    { id: 1, name: 'Bachelor of Science in Computer Science', code: 'BSc. CS', department: 'Computer Science' },
-    { id: 2, name: 'Bachelor of Business Information Technology', code: 'BBIT', department: 'Business Information Technology' },
-    { id: 3, name: 'Bachelor of Business Administration', code: 'BBA', department: 'Business Administration' },
-    { id: 4, name: 'Diploma in Computer Science', code: 'DCS', department: 'Computer Science' },
-    { id: 5, name: 'Bachelor of Software Engineering', code: 'BSE', department: 'Software Engineering' },
-  ];
+  // Load departments
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      try {
+        const departmentsSnapshot = await getDocs(collection(db, 'departments'));
+        const departmentsData = departmentsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setDepartments(departmentsData);
+      } catch (error) {
+        console.error("Error loading departments:", error);
+        toast.error("Failed to load departments");
+      }
+    };
+    
+    fetchDepartments();
+  }, []);
 
-  // Filter programs based on user role
-  const programs = userRole === 'admin' 
-    ? allPrograms 
-    : allPrograms.filter(program => program.department === userDepartment);
-
-  // Mock courses for display
-  const mockCourses = [
-    { id: 1, name: 'Introduction to Programming', code: 'BIT 1201', program: 'Bachelor of Business Information Technology', department: 'Business Information Technology', programId: 2, creditUnits: 4, yearOfStudy: 1, semester: 2, courseNumber: '01', students: 68, lecturer: 'Prof. Mary Johnson', isApproved: true, isCrossCutting: true },
-    { id: 2, name: 'Database Systems', code: 'CS 2104', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', programId: 1, creditUnits: 3, yearOfStudy: 2, semester: 1, courseNumber: '04', students: 42, lecturer: 'Dr. John Smith', isApproved: true, isCrossCutting: false },
-    { id: 3, name: 'Software Engineering', code: 'SE 3201', program: 'Bachelor of Software Engineering', department: 'Software Engineering', programId: 5, creditUnits: 4, yearOfStudy: 3, semester: 2, courseNumber: '01', students: 35, lecturer: 'Dr. Elizabeth Brown', isApproved: true, isCrossCutting: false },
-    { id: 4, name: 'Web Development', code: 'CS 2302', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', programId: 1, creditUnits: 3, yearOfStudy: 2, semester: 3, courseNumber: '02', students: 48, lecturer: 'Jane Williams', isApproved: true, isCrossCutting: false },
-    { id: 5, name: 'Operating Systems', code: 'CS 3105', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', programId: 1, creditUnits: 3, yearOfStudy: 3, semester: 1, courseNumber: '05', students: 38, lecturer: 'Not Assigned', isApproved: true, isCrossCutting: false },
-    { id: 6, name: 'Business Statistics', code: 'BBA 2103', program: 'Bachelor of Business Administration', department: 'Business Administration', programId: 3, creditUnits: 3, yearOfStudy: 2, semester: 1, courseNumber: '03', students: 76, lecturer: 'Not Assigned', isApproved: true, isCrossCutting: false },
-    { id: 7, name: 'Computer Networks', code: 'CS 3201', program: 'Bachelor of Science in Computer Science', department: 'Computer Science', programId: 1, creditUnits: 4, yearOfStudy: 3, semester: 2, courseNumber: '01', students: 32, lecturer: 'Dr. John Smith', isApproved: false, isCrossCutting: false },
-  ];
-
+  // Function to load all programs from Firestore
+  useEffect(() => {
+    const loadPrograms = async () => {
+      try {
+        setIsLoading(true);
+        const programsRef = collection(db, 'programs');
+        let q;
+        
+        // If user is HoD, only show programs from their department
+        if (userRole === 'hod') {
+          const departmentsRef = collection(db, 'departments');
+          const deptQuery = query(departmentsRef, where("name", "==", userDepartment), where("isActive", "==", true));
+          const deptSnapshot = await getDocs(deptQuery);
+          
+          if (!deptSnapshot.empty) {
+            const departmentId = deptSnapshot.docs[0].id;
+            q = query(programsRef, where("departmentId", "==", departmentId), where("isActive", "==", true), orderBy("name"));
+          } else {
+            // If department not found, don't query programs
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // For admin, show all active programs
+          q = query(programsRef, where("isActive", "==", true), orderBy("name"));
+        }
+        
+        const snapshot = await getDocs(q);
+        const programData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setPrograms(programData);
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Error loading programs:", error);
+        toast.error("Failed to load programs");
+        setIsLoading(false);
+      }
+    };
+    
+    loadPrograms();
+  }, [userRole, userDepartment]);
+  
+  // Function to load all courses from Firestore with real-time updates
+  useEffect(() => {
+    if (programs.length === 0) return; // Don't query if programs haven't loaded
+    
+    setIsLoading(true);
+    let q;
+    const coursesRef = collection(db, 'courses');
+    
+    // If user is HoD, only show courses from their department or cross-cutting courses
+    if (userRole === 'hod') {
+      const departmentPrograms = programs.map(program => program.id);
+      
+      if (departmentPrograms.length > 0) {
+        q = query(
+          coursesRef, 
+          where("programId", "in", departmentPrograms),
+          orderBy("createdAt", "desc")
+        );
+      } else {
+        // If no programs in department, don't query
+        setIsLoading(false);
+        return;
+      }
+    } else if (userRole === 'admin' && selectedDepartment !== 'all') {
+      // For admin with selected department
+      q = query(
+        coursesRef,
+        where("departmentName", "==", selectedDepartment),
+        orderBy("createdAt", "desc")
+      );
+    } else {
+      // For admin showing all courses
+      q = query(coursesRef, orderBy("createdAt", "desc"));
+    }
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const courseData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCourses(courseData);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error loading courses:", error);
+      toast.error("Failed to load courses");
+      setIsLoading(false);
+    });
+    
+    // Cleanup function
+    return () => unsubscribe();
+  }, [programs, userRole, selectedDepartment]);
+  
   // Filter courses based on search query and user role
-  const filteredCourses = mockCourses.filter(course => {
+  const filteredCourses = courses.filter(course => {
     // Text search filter
-    const matchesSearch = course.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.program.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (course.lecturer && course.lecturer.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesSearch = 
+      course.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.programName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.lecturer?.toLowerCase().includes(searchQuery.toLowerCase());
     
     // Role-based filter
     if (userRole === 'hod') {
-      // HoDs can only see their department's courses or cross-cutting courses
-      return matchesSearch && (course.department === userDepartment || course.isCrossCutting);
+      // HoDs can see courses from their department or cross-cutting courses
+      return matchesSearch && (course.departmentName === userDepartment || course.isCrossCutting);
+    }
+    
+    // Department filter for admin users
+    if (userRole === 'admin' && selectedDepartment !== 'all') {
+      return matchesSearch && (course.departmentName === selectedDepartment || course.isCrossCutting);
     }
     
     return matchesSearch;
@@ -71,15 +194,29 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
 
   const handleFormChange = (field, value) => {
     if (field === 'programId') {
-      // When program changes, update the course code prefix
-      const selectedProgram = programs.find(p => p.id.toString() === value);
-      const codePrefix = selectedProgram ? selectedProgram.code.split('.')[0] : '';
+      // When program changes, update the course code prefix and department
+      const selectedProgram = programs.find(p => p.id === value);
       
-      setCurrentCourse(prev => ({
-        ...prev,
-        [field]: value,
-        code: value ? `${codePrefix} ${prev.yearOfStudy}${prev.semester}${prev.courseNumber || '01'}` : prev.code
-      }));
+      if (selectedProgram) {
+        const codePrefix = selectedProgram.code.split('.')[0];
+        
+        setCurrentCourse(prev => ({
+          ...prev,
+          [field]: value,
+          programName: selectedProgram.name,
+          departmentId: selectedProgram.departmentId,
+          departmentName: selectedProgram.departmentName,
+          code: `${codePrefix} ${prev.yearOfStudy}${prev.semester}${prev.courseNumber || '01'}`
+        }));
+      } else {
+        setCurrentCourse(prev => ({
+          ...prev,
+          [field]: value,
+          programName: '',
+          departmentId: '',
+          departmentName: ''
+        }));
+      }
     } else if (['yearOfStudy', 'semester', 'courseNumber'].includes(field)) {
       // When year, semester or course number changes, update the course code
       const updatedValues = {
@@ -89,14 +226,18 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
       
       const programId = updatedValues.programId;
       if (programId) {
-        const selectedProgram = programs.find(p => p.id.toString() === programId);
-        const codePrefix = selectedProgram ? selectedProgram.code.split('.')[0] : '';
-        const courseNum = field === 'courseNumber' ? value : (updatedValues.courseNumber || '01');
-        
-        setCurrentCourse({
-          ...updatedValues,
-          code: `${codePrefix} ${updatedValues.yearOfStudy}${updatedValues.semester}${courseNum}`
-        });
+        const selectedProgram = programs.find(p => p.id === programId);
+        if (selectedProgram) {
+          const codePrefix = selectedProgram.code.split('.')[0];
+          const courseNum = field === 'courseNumber' ? value : (updatedValues.courseNumber || '01');
+          
+          setCurrentCourse({
+            ...updatedValues,
+            code: `${codePrefix} ${updatedValues.yearOfStudy}${updatedValues.semester}${courseNum}`
+          });
+        } else {
+          setCurrentCourse(updatedValues);
+        }
       } else {
         setCurrentCourse(updatedValues);
       }
@@ -108,69 +249,192 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
     }
   };
 
-  const handleAddCourse = () => {
-    // Validate required fields
-    if (!currentCourse.name || !currentCourse.code || !currentCourse.programId) {
-      alert('Please fill all required fields');
-      return;
-    }
-    
-    // For HoD role, validate department restrictions
-    if (userRole === 'hod') {
-      const selectedProgram = programs.find(p => p.id.toString() === currentCourse.programId);
+  const handleAddCourse = async () => {
+    try {
+      setIsLoading(true);
       
-      // Ensure the program belongs to HoD's department
-      if (selectedProgram && selectedProgram.department !== userDepartment) {
-        alert(`As a Head of Department, you can only create courses for programs in your department (${userDepartment}).`);
+      // Validate required fields
+      if (!currentCourse.name || !currentCourse.code || !currentCourse.programId) {
+        toast.error('Please fill all required fields');
+        setIsLoading(false);
         return;
       }
       
-      // If editing, ensure HoD can only edit their department's courses unless cross-cutting
-      if (editMode) {
-        const originalCourse = mockCourses.find(course => 
-          course.name === currentCourse.name || course.code === currentCourse.code
-        );
+      // For HoD role, validate department restrictions
+      if (userRole === 'hod') {
+        const selectedProgram = programs.find(p => p.id === currentCourse.programId);
         
-        if (originalCourse && originalCourse.department !== userDepartment && !originalCourse.isCrossCutting) {
-          alert(`As a Head of Department, you can only edit courses for your department (${userDepartment}) or cross-cutting courses.`);
+        // Ensure the program belongs to HoD's department
+        if (selectedProgram && selectedProgram.departmentName !== userDepartment) {
+          toast.error(`As a Head of Department, you can only create courses for programs in your department (${userDepartment}).`);
+          setIsLoading(false);
           return;
         }
+        
+        // If editing, ensure HoD can only edit their department's courses unless cross-cutting
+        if (editMode) {
+          const originalCourse = courses.find(course => course.id === editCourseId);
+          
+          if (originalCourse && originalCourse.departmentName !== userDepartment && !originalCourse.isCrossCutting) {
+            toast.error(`As a Head of Department, you can only edit courses for your department (${userDepartment}) or cross-cutting courses.`);
+            setIsLoading(false);
+            return;
+          }
+        }
       }
+      
+      // Create course data object
+      const courseData = {
+        name: currentCourse.name,
+        code: currentCourse.code.toUpperCase(),
+        creditUnits: parseInt(currentCourse.creditUnits),
+        programId: currentCourse.programId,
+        programName: currentCourse.programName,
+        departmentId: currentCourse.departmentId,
+        departmentName: currentCourse.departmentName,
+        yearOfStudy: parseInt(currentCourse.yearOfStudy),
+        semester: parseInt(currentCourse.semester),
+        courseNumber: currentCourse.courseNumber,
+        isActive: currentCourse.isActive,
+        isCrossCutting: currentCourse.isCrossCutting,
+        students: editMode ? (currentCourse.students || 0) : 0,
+        lecturer: currentCourse.lecturer || 'Not Assigned',
+        updatedAt: serverTimestamp()
+      };
+      
+      if (editMode) {
+        // Update existing course
+        const courseRef = doc(db, 'courses', editCourseId);
+        await updateDoc(courseRef, courseData);
+        toast.success(`Course ${currentCourse.name} has been updated`);
+      } else {
+        // Add new course
+        const newCourseRef = doc(collection(db, 'courses'));
+        await setDoc(newCourseRef, {
+          ...courseData,
+          createdBy: user.uid,
+          createdAt: serverTimestamp(),
+          students: 0
+        });
+        toast.success(`Course ${currentCourse.name} has been added successfully`);
+        
+        // Update program to increment courses count
+        try {
+          const programRef = doc(db, 'programs', currentCourse.programId);
+          const programDoc = await getDoc(programRef);
+          if (programDoc.exists()) {
+            const currentCourses = programDoc.data().courses || 0;
+            await updateDoc(programRef, {
+              courses: currentCourses + 1,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (error) {
+          console.error("Error updating program course count:", error);
+        }
+      }
+      
+      resetAndCloseModal();
+    } catch (error) {
+      console.error("Error adding/updating course:", error);
+      toast.error("Failed to save course");
+    } finally {
+      setIsLoading(false);
     }
+  };
+  
+  const handleDeleteCourse = async () => {
+    if (!editCourseId) return;
     
-    // In a real app, you would make an API call to add the course
-    console.log('Adding/updating course:', currentCourse);
-    
-    if (editMode) {
-      alert(`Course ${currentCourse.name} has been updated`);
-    } else {
-      alert(`Course ${currentCourse.name} has been added successfully`);
+    try {
+      setDeletingCourse(true);
+      
+      // Get course details to update program count after deletion
+      const courseRef = doc(db, 'courses', editCourseId);
+      const courseDoc = await getDoc(courseRef);
+      
+      if (courseDoc.exists()) {
+        const courseData = courseDoc.data();
+        
+        // Delete the course
+        await deleteDoc(courseRef);
+        
+        // Update program to decrement courses count
+        if (courseData.programId) {
+          try {
+            const programRef = doc(db, 'programs', courseData.programId);
+            const programDoc = await getDoc(programRef);
+            if (programDoc.exists()) {
+              const currentCourses = programDoc.data().courses || 0;
+              if (currentCourses > 0) {
+                await updateDoc(programRef, {
+                  courses: currentCourses - 1,
+                  updatedAt: serverTimestamp()
+                });
+              }
+            }
+          } catch (error) {
+            console.error("Error updating program course count:", error);
+          }
+        }
+        
+        toast.success("Course has been deleted");
+      }
+      
+      setShowDeleteConfirmation(false);
+    } catch (error) {
+      console.error("Error deleting course:", error);
+      toast.error("Failed to delete course");
+    } finally {
+      setDeletingCourse(false);
     }
-    
-    resetAndCloseModal();
+  };
+  
+  const toggleCourseStatus = async (courseId, currentStatus) => {
+    try {
+      const courseRef = doc(db, 'courses', courseId);
+      await updateDoc(courseRef, {
+        isActive: !currentStatus,
+        updatedAt: serverTimestamp()
+      });
+      
+      toast.success(`Course ${currentStatus ? 'deactivated' : 'activated'} successfully`);
+    } catch (error) {
+      console.error("Error toggling course status:", error);
+      toast.error("Failed to update course status");
+    }
   };
 
   const handleEditCourse = (courseId) => {
-    const courseToEdit = mockCourses.find(course => course.id === courseId);
+    const courseToEdit = courses.find(course => course.id === courseId);
     if (courseToEdit) {
       setCurrentCourse({
         name: courseToEdit.name,
         code: courseToEdit.code,
         creditUnits: courseToEdit.creditUnits.toString(),
-        programId: courseToEdit.programId.toString(),
+        programId: courseToEdit.programId,
+        programName: courseToEdit.programName,
+        departmentId: courseToEdit.departmentId,
+        departmentName: courseToEdit.departmentName,
         yearOfStudy: courseToEdit.yearOfStudy.toString(),
         semester: courseToEdit.semester.toString(),
         courseNumber: courseToEdit.courseNumber,
-        isApproved: courseToEdit.isApproved,
-        isCrossCutting: courseToEdit.isCrossCutting
+        isActive: courseToEdit.isActive,
+        isCrossCutting: courseToEdit.isCrossCutting,
+        lecturer: courseToEdit.lecturer,
+        students: courseToEdit.students,
+        createdBy: courseToEdit.createdBy,
+        createdAt: courseToEdit.createdAt,
+        updatedAt: courseToEdit.updatedAt
       });
       setEditMode(true);
+      setEditCourseId(courseId);
       setShowAddCourseModal(true);
     }
   };
 
   const handleViewCourse = (courseId) => {
-    const course = mockCourses.find(c => c.id === courseId);
+    const course = courses.find(c => c.id === courseId);
     setSelectedCourse(course);
   };
   
@@ -184,11 +448,17 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
       code: '',
       creditUnits: '3',
       programId: '',
+      programName: '',
+      departmentId: '',
+      departmentName: '',
       yearOfStudy: '1',
       semester: '1',
       courseNumber: '01',
-      isApproved: true,
-      isCrossCutting: false
+      isActive: true,
+      isCrossCutting: false,
+      createdBy: '',
+      createdAt: null,
+      updatedAt: null
     });
     setEditMode(false);
     setShowAddCourseModal(false);
@@ -210,19 +480,168 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
 
   // Render course details view when a course is selected
   if (selectedCourse) {
-    // Course details view code omitted for brevity
     return (
       <div className="p-6">
-        {/* Back button and details */}
-        <button onClick={handleBackToCourses}>Back to Courses</button>
-        <h1>{selectedCourse.name}</h1>
-        <p>Code: {selectedCourse.code}</p>
-        <p>Department: {selectedCourse.department}</p>
-        <p>Credit Units: {selectedCourse.creditUnits}</p>
-        <p>Year of Study: {selectedCourse.yearOfStudy}</p>
-        <p>Semester: {selectedCourse.semester}</p>
-        <p>Lecturer: {selectedCourse.lecturer}</p>
-        <p>Status: {selectedCourse.isApproved ? 'Active | approved' : 'Inactive | pending'}</p>
+        {/* Back button and header */}
+        <div className="flex items-center gap-2 mb-6">
+          <button 
+            onClick={handleBackToCourses}
+            className={`p-2 rounded-md ${
+              darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+            {selectedCourse.name}
+          </h1>
+        </div>
+        
+        {/* Course details card */}
+        <div className={`mb-8 p-6 rounded-lg ${
+          darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'
+        } shadow-sm`}>
+          <div className="flex flex-col md:flex-row gap-6">
+            <div className="flex-1">
+              <div className="flex items-center mb-4">
+                <div className={`p-3 rounded-lg ${darkMode ? 'bg-amber-900/30' : 'bg-amber-100'} mr-4`}>
+                  <BookOpen className={`h-6 w-6 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
+                </div>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Course Code</p>
+                  <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                    {selectedCourse.code}
+                  </h3>
+                </div>
+              </div>
+              
+              <div className={`grid grid-cols-2 gap-4 p-4 rounded-lg mb-4 ${
+                darkMode ? 'bg-gray-900/50' : 'bg-gray-50'
+              }`}>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Program</p>
+                  <div className="flex items-center mt-1">
+                    <Building className={`h-4 w-4 mr-2 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {selectedCourse.programName}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Department</p>
+                  <div className="flex items-center mt-1">
+                    <Building className={`h-4 w-4 mr-2 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {selectedCourse.departmentName}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`grid grid-cols-3 gap-4 p-4 rounded-lg mb-4 ${
+                darkMode ? 'bg-gray-900/50' : 'bg-gray-50'
+              }`}>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Year of Study</p>
+                  <div className="flex items-center mt-1">
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      Year {selectedCourse.yearOfStudy}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Semester</p>
+                  <div className="flex items-center mt-1">
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      Semester {selectedCourse.semester}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Credit Units</p>
+                  <div className="flex items-center mt-1">
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {selectedCourse.creditUnits} Units
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                <p>
+                  This course is {selectedCourse.isActive ? 'active' : 'not active'}{selectedCourse.isCrossCutting ? ' and is a cross-cutting course' : ''}.
+                  {selectedCourse.students > 0 ? ` It currently has ${selectedCourse.students} student${selectedCourse.students !== 1 ? 's' : ''} enrolled.` : ' It has no students enrolled yet.'}
+                </p>
+              </div>
+            </div>
+            
+            <div className="md:w-64 flex flex-col">
+              <div className={`p-4 rounded-lg mb-4 ${
+                darkMode ? 'bg-gray-900/50' : 'bg-gray-50'
+              }`}>
+                <h3 className={`text-lg font-medium mb-3 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                  Course Details
+                </h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Students</span>
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {selectedCourse.students || 0}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Lecturer</span>
+                    <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {selectedCourse.lecturer || 'Not Assigned'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Status</span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      selectedCourse.isActive
+                        ? (darkMode ? 'bg-green-900/20 text-green-400' : 'bg-green-100 text-green-700')
+                        : (darkMode ? 'bg-yellow-900/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                    }`}>
+                      {selectedCourse.isActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => handleEditCourse(selectedCourse.id)} 
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg ${
+                    darkMode 
+                      ? 'bg-indigo-900/20 text-indigo-400 hover:bg-indigo-900/40 border border-indigo-800/30' 
+                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200'
+                  }`}
+                >
+                  <Edit className="h-4 w-4" />
+                  <span>Edit Course</span>
+                </button>
+                
+                <button
+                  onClick={() => toggleCourseStatus(selectedCourse.id, selectedCourse.isActive)} 
+                  className={`flex items-center justify-center gap-2 p-2 rounded-lg ${
+                    selectedCourse.isActive
+                    ? (darkMode 
+                        ? 'bg-yellow-900/20 text-yellow-400 hover:bg-yellow-900/40 border border-yellow-800/30' 
+                        : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200')
+                    : (darkMode 
+                        ? 'bg-green-900/20 text-green-400 hover:bg-green-900/40 border border-green-800/30' 
+                        : 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200')
+                  }`}
+                >
+                  {selectedCourse.isActive ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+                  <span>{selectedCourse.isActive ? 'Deactivate Course' : 'Activate Course'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -242,124 +661,172 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
           </p>
         </div>
         
-        <button 
-          onClick={() => setShowAddCourseModal(true)}
-          className={`inline-flex items-center px-5 py-3 rounded-lg text-lg ${
-            darkMode 
-              ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
-              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-          }`}
-        >
-          <Plus className="h-6 w-6 mr-2" /> 
-          <span>Register Course Unit</span>
-        </button>
+        {/* Only show add button if not viewing a specific course */}
+        {!selectedCourse && (
+          <button 
+            onClick={() => setShowAddCourseModal(true)}
+            className={`inline-flex items-center px-5 py-3 rounded-lg text-lg ${
+              darkMode 
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white' 
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+            }`}
+          >
+            <Plus className="h-6 w-6 mr-2" /> 
+            <span>Register Course Unit</span>
+          </button>
+        )}
       </div>
 
-      {/* Search and filters */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <div className={`p-5 rounded-lg ${darkMode ? 'bg-indigo-900/20' : 'bg-indigo-50'} flex items-start gap-3 max-w-lg`}>
-          <div className={`p-3 rounded-full ${darkMode ? 'bg-indigo-900/30' : 'bg-indigo-100'}`}>
-            <BookOpen className={`h-6 w-6 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
-          </div>
-          <div>
-            <h3 className={`text-lg font-medium ${darkMode ? 'text-indigo-400' : 'text-indigo-700'}`}>
-              Course Unit Registration
-            </h3>
-            <p className={`text-base ${darkMode ? 'text-indigo-300' : 'text-indigo-600'}`}>
-              Each course unit must have a unique code, credit units value, and belong to a specific department.
-            </p>
+      {/* Search and filters - updated with department selector */}
+      {!selectedCourse && (
+        <div className={`mb-6 p-4 rounded-lg ${darkMode ? 'bg-gray-800' : 'bg-white'} shadow-md`}>
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="relative flex-grow">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+              <input 
+                type="text" 
+                placeholder="Search course units..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={`pl-10 p-2 w-full rounded-md border ${
+                  darkMode 
+                    ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                    : 'bg-white border-gray-300 text-gray-800 placeholder-gray-500'
+                }`}
+              />
+            </div>
+            
+            {userRole === 'admin' && (
+              <div className="relative min-w-[200px]">
+                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => setSelectedDepartment(e.target.value)}
+                  className={`pl-10 p-2 w-full rounded-md border appearance-none ${
+                    darkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-800'
+                  }`}
+                >
+                  <option value="all" className={darkMode ? 'bg-gray-700' : 'bg-white'}>All Departments</option>
+                  {departments.map(dept => (
+                    <option
+                      key={dept.id}
+                      value={dept.name}
+                      className={darkMode ? 'bg-gray-700' : 'bg-white'}
+                    >
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                  <svg className={`h-5 w-5 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-        
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center rounded-lg border px-4 py-2 min-w-[240px] ${
-            darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
-          }`}>
-            <Search className="h-5 w-5 text-gray-400 mr-2" />
-            <input 
-              type="text"
-              placeholder="Search courses..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`outline-none border-none text-base ${
-                darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
-              }`}
-            />
-          </div>
-          
-          <button className={`p-3 rounded-lg border ${
-            darkMode ? 'border-gray-700 text-gray-400' : 'border-gray-300 text-gray-600'
-          }`}>
-            <Filter className="h-5 w-5" />
-          </button>
+      )}
+
+      {/* Loading and empty states */}
+      {isLoading && (
+        <div className={`p-12 flex flex-col items-center justify-center ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mb-4"></div>
+          <p className="text-lg">Loading courses...</p>
         </div>
-      </div>
+      )}
+
+      {!isLoading && programs.length === 0 && (
+        <div className={`p-12 flex flex-col items-center justify-center ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+          <div className={`p-4 rounded-full ${darkMode ? 'bg-gray-800' : 'bg-gray-100'} mb-4`}>
+            <BookOpen className="h-10 w-10 text-indigo-500" />
+          </div>
+          <p className="text-lg mb-2">No programs available</p>
+          <p className="text-center max-w-md">You need to register programs before you can add course units. Please register programs first.</p>
+        </div>
+      )}
+
+      {!isLoading && programs.length > 0 && filteredCourses.length === 0 && (
+        <div className={`p-12 flex flex-col items-center justify-center ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+          <div className={`p-4 rounded-full ${darkMode ? 'bg-gray-800' : 'bg-gray-100'} mb-4`}>
+            <BookOpen className="h-10 w-10 text-indigo-500" />
+          </div>
+          <p className="text-lg mb-2">No courses found</p>
+          <p className="text-center max-w-md">
+            {searchQuery ? 'No courses match your search criteria. Try a different search term.' : 'There are no courses registered yet. Click "Register Course Unit" to add your first course.'}
+          </p>
+        </div>
+      )}
 
       {/* Courses grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-6 px-4">
-        {filteredCourses.map(course => (
-          <div 
-            key={course.id} 
-            className={`rounded-lg overflow-hidden ${
-              darkMode 
-                ? 'bg-gray-900 border border-gray-800' 
-                : 'bg-white border border-gray-200'
-            } transition-all shadow-lg`}
-          >
-            <div className="p-5">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                    {course.code}
-                  </h3>
-                  <p className="text-sm text-gray-500 mt-1">{course.department}</p>
-                </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  course.isApproved
-                    ? 'bg-green-900/20 text-green-500 border border-green-700/20' 
-                    : 'bg-yellow-900/20 text-yellow-500 border border-yellow-700/20'
-                }`}>
-                  {course.isApproved ? 'Active' : 'Inactive'}
-                </div>
-              </div>
-
-              <h4 className={`text-lg mb-3 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                {course.name}
-              </h4>
-
-              <div className="text-3xl font-bold text-blue-500 mb-5">
-                {course.creditUnits} <span className="text-sm opacity-70">Units</span>
-              </div>
-
-              <div className="flex justify-between items-center pt-3 border-t border-gray-800">
-                <div className="flex items-center">
-                  <Users className="h-4 w-4 text-gray-500 mr-1" />
-                  <span className="text-sm text-gray-500">
-                    Lecturer: {course.lecturer !== 'Not Assigned' ? 
-                      <span className={`font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>{course.lecturer.split(' ')[1]}</span> : 
-                      <span className="text-yellow-500">Not Assigned</span>}
-                  </span>
+      {!isLoading && filteredCourses.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-6 px-4">
+          {filteredCourses.map(course => (
+            <div 
+              key={course.id} 
+              className={`rounded-lg overflow-hidden ${
+                darkMode 
+                  ? 'bg-gray-900 border border-gray-800' 
+                  : 'bg-white border border-gray-200'
+              } transition-all shadow-lg`}
+            >
+              <div className="p-5">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {course.code}
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1">{course.departmentName}</p>
+                  </div>
+                  <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    course.isActive
+                      ? 'bg-green-900/20 text-green-500 border border-green-700/20' 
+                      : 'bg-yellow-900/20 text-yellow-500 border border-yellow-700/20'
+                  }`}>
+                    {course.isActive ? 'Active' : 'Inactive'}
+                  </div>
                 </div>
 
-                <div className="flex space-x-1">
-                  <button 
-                    onClick={() => handleEditCourse(course.id)}
-                    className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
-                  >
-                    <Edit className="h-4 w-4" />
-                  </button>
-                  <button 
-                    onClick={() => handleViewCourse(course.id)}
-                    className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </button>
+                <h4 className={`text-lg mb-3 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {course.name}
+                </h4>
+
+                <div className="text-3xl font-bold text-blue-500 mb-5">
+                  {course.creditUnits} <span className="text-sm opacity-70">Units</span>
+                </div>
+
+                <div className="flex justify-between items-center pt-3 border-t border-gray-800">
+                  <div className="flex items-center">
+                    <Users className="h-4 w-4 text-gray-500 mr-1" />
+                    <span className="text-sm text-gray-500">
+                      Lecturer: {course.lecturer !== 'Not Assigned' ? 
+                        <span className={`font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>{course.lecturer.split(' ')[1]}</span> : 
+                        <span className="text-yellow-500">Not Assigned</span>}
+                    </span>
+                  </div>
+
+                  <div className="flex space-x-1">
+                    <button 
+                      onClick={() => handleEditCourse(course.id)}
+                      className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button 
+                      onClick={() => handleViewCourse(course.id)}
+                      className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Add/Edit course modal */}
       {showAddCourseModal && (
@@ -509,12 +976,12 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                     <div className="flex items-center">
                       <input 
                         type="checkbox" 
-                        id="isApproved"
-                        checked={currentCourse.isApproved}
-                        onChange={(e) => handleFormChange('isApproved', e.target.checked)}
+                        id="isActive"
+                        checked={currentCourse.isActive}
+                        onChange={(e) => handleFormChange('isActive', e.target.checked)}
                         className="mr-2 h-4 w-4"
                       />
-                      <label htmlFor="isApproved" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                      <label htmlFor="isActive" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                         Course is approved
                       </label>
                     </div>
@@ -549,8 +1016,59 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                 <button 
                   onClick={handleAddCourse}
                   className={`px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700`}
+                  disabled={isLoading}
                 >
-                  {editMode ? 'Update Course Unit' : 'Register Course Unit'}
+                  {isLoading ? 'Saving...' : (editMode ? 'Update Course Unit' : 'Register Course Unit')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirmation && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" onClick={() => setShowDeleteConfirmation(false)}>
+              <div className="absolute inset-0 bg-black opacity-50"></div>
+            </div>
+
+            <div className={`inline-block align-bottom rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full ${
+              darkMode ? 'bg-gray-800' : 'bg-white'
+            }`}>
+              <div className="px-6 py-4">
+                <div className="flex items-center justify-center mb-4">
+                  <div className={`p-3 rounded-full ${darkMode ? 'bg-red-900/30' : 'bg-red-100'}`}>
+                    <Trash2 className={`h-6 w-6 ${darkMode ? 'text-red-500' : 'text-red-600'}`} />
+                  </div>
+                </div>
+                
+                <h3 className={`text-lg font-medium text-center mb-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  Confirm Delete
+                </h3>
+                
+                <p className={`text-center ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Are you sure you want to delete this course? This action cannot be undone.
+                </p>
+              </div>
+              
+              <div className={`px-6 py-4 flex justify-center gap-4`}>
+                <button 
+                  onClick={() => setShowDeleteConfirmation(false)}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancel
+                </button>
+                
+                <button 
+                  onClick={handleDeleteCourse}
+                  className={`px-4 py-2 rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700`}
+                  disabled={deletingCourse}
+                >
+                  {deletingCourse ? 'Deleting...' : 'Delete Course'}
                 </button>
               </div>
             </div>

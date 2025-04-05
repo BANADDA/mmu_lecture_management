@@ -1,13 +1,13 @@
 import {
-    AlertTriangle,
-    BookOpen,
-    Calendar,
-    ChevronLeft,
-    ChevronRight,
-    Filter,
-    Plus,
-    Search,
-    User
+  AlertTriangle,
+  BookOpen,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  Plus,
+  Search,
+  User
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useState } from 'react';
@@ -18,8 +18,8 @@ const ScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Computer Scien
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAddEventModal, setShowAddEventModal] = useState(false);
   const [semesterDates, setSemesterDates] = useState({
-    startDate: '2023-09-01',
-    endDate: '2023-12-15'
+    startDate: '2025-09-01',
+    endDate: '2025-12-15'
   });
   const [showSemesterModal, setShowSemesterModal] = useState(false);
   const [unscheduledView, setUnscheduledView] = useState(false);
