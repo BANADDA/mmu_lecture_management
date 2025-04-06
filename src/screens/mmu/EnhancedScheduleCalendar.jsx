@@ -128,16 +128,19 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         let scheduleQuery = collection(db, 'scheduleEvents');
         const queryFilters = [];
         
-        if (userRole === 'admin' && selectedDepartment !== 'all') {
-          queryFilters.push(where('department', '==', selectedDepartment));
-        } else if (userRole === 'hod') {
-          queryFilters.push(where('department', '==', userDepartment));
-        } else if (userRole === 'lecturer') {
+        // Only apply filters based on user role and selections
+        if (userRole === 'lecturer') {
+          // Lecturers only see their own schedules
           queryFilters.push(where('lecturerId', '==', user.uid));
-        }
-        
-        // Add program filter if a specific program is selected
-        if (selectedProgram !== 'all') {
+        } else if (userRole === 'hod' && selectedProgram === 'all') {
+          // HoDs see department schedules and cross-cutting courses
+          // Can't use OR queries directly with Firestore, so we'll filter in JS
+          queryFilters.push(where('department', '==', userDepartment));
+        } else if (userRole === 'admin' && selectedDepartment !== 'all' && selectedProgram === 'all') {
+          // Admins with specific department but all programs
+          queryFilters.push(where('department', '==', selectedDepartment));
+        } else if (selectedProgram !== 'all') {
+          // Specific program selected - filter by programId
           queryFilters.push(where('programId', '==', selectedProgram));
         }
         
@@ -156,7 +159,50 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
           courseName: coursesData.find(c => c.id === doc.data().courseId)?.name || 'Unknown',
           courseCode: coursesData.find(c => c.id === doc.data().courseId)?.code || 'Unknown'
         }));
-        setScheduleEvents(scheduleData);
+        
+        // If we're showing a specific department/role, we need to fetch cross-cutting courses separately
+        // since Firestore doesn't support OR queries directly in our current setup
+        if ((userRole === 'hod' || (userRole === 'admin' && selectedDepartment !== 'all')) && selectedProgram === 'all') {
+          // Get cross-cutting courses in a separate query
+          const crossCuttingQuery = query(
+            collection(db, 'scheduleEvents'),
+            where('isCrossCutting', '==', true)
+          );
+          
+          const crossCuttingSnapshot = await getDocs(crossCuttingQuery);
+          const crossCuttingData = crossCuttingSnapshot.docs
+            .map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+              lecturer: lecturersData.find(l => l.id === doc.data().lecturerId)?.name || 'Unknown',
+              room: roomsData.find(r => r.id === doc.data().roomId)?.name || 'Unknown',
+              courseName: coursesData.find(c => c.id === doc.data().courseId)?.name || 'Unknown',
+              courseCode: coursesData.find(c => c.id === doc.data().courseId)?.code || 'Unknown'
+            }))
+            .filter(event => {
+              // For HoDs, only include cross-cutting courses relevant to their department
+              if (userRole === 'hod') {
+                return event.crossCuttingDepartments?.includes(userDepartment);
+              }
+              // For admins with selected department
+              if (userRole === 'admin' && selectedDepartment !== 'all') {
+                return event.crossCuttingDepartments?.includes(selectedDepartment);
+              }
+              return true;
+            });
+
+          // Combine regular and cross-cutting events, avoiding duplicates
+          const combinedEvents = [...scheduleData];
+          crossCuttingData.forEach(event => {
+            if (!combinedEvents.some(e => e.id === event.id)) {
+              combinedEvents.push(event);
+            }
+          });
+          
+          setScheduleEvents(combinedEvents);
+        } else {
+          setScheduleEvents(scheduleData);
+        }
         
         // Fetch semester settings
         const semesterSettingsSnapshot = await getDocs(collection(db, 'settings'));
@@ -1692,14 +1738,14 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     // Filter by program type (day or evening)
     filtered = filtered.filter(event => event.programType === programType);
     
-    // Filter by user role and department
+    // Filter by user role and department if not 'all'
     if (userRole === 'hod') {
       filtered = filtered.filter(event => 
         event.department === userDepartment || event.isCrossCutting
       );
     }
     
-    // Filter by program if selected
+    // Filter by program if selected and not 'all'
     if (selectedProgram !== 'all') {
       filtered = filtered.filter(event => 
         event.programId === selectedProgram || 

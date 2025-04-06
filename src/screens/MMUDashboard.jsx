@@ -5,7 +5,6 @@ import {
   BookOpen,
   Building,
   Calendar,
-  Circle,
   Clock,
   Download,
   Filter,
@@ -22,7 +21,7 @@ import {
   Users
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase/firebase';
@@ -162,17 +161,43 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
     };
   }, []);
 
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home },
-    { id: 'users', label: 'Users Management', icon: Users },
-    { id: 'departments', label: 'Departments', icon: Building },
-    { id: 'programs', label: 'Programs', icon: BookMarked },
-    { id: 'courses', label: 'Course Units', icon: BookOpen },
-    { id: 'rooms', label: 'Room Management', icon: Building, adminOnly: true },
-    { id: 'allocations', label: 'Allocate Courses', icon: UserCog },
-    { id: 'schedule', label: 'Schedule Calendar', icon: Calendar },
-    { id: 'analytics', label: 'Analytics', icon: BarChart },
-    { id: 'settings', label: 'Settings', icon: Settings },
+  // Group menu items into logical sections
+  const menuSections = [
+    {
+      title: "Main",
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: Home }
+      ]
+    },
+    {
+      title: "Resource Management",
+      items: [
+        { id: 'departments', label: 'Departments', icon: Building },
+        { id: 'programs', label: 'Programs', icon: BookMarked },
+        { id: 'courses', label: 'Course Units', icon: BookOpen },
+        { id: 'rooms', label: 'Room Management', icon: Building, adminOnly: true }
+      ]
+    },
+    {
+      title: "User Management",
+      items: [
+        { id: 'users', label: 'Users Management', icon: Users }
+      ]
+    },
+    {
+      title: "Scheduling",
+      items: [
+        { id: 'allocations', label: 'Allocate Courses', icon: UserCog },
+        { id: 'schedule', label: 'Schedule Calendar', icon: Calendar }
+      ]
+    },
+    {
+      title: "System",
+      items: [
+        { id: 'analytics', label: 'Analytics', icon: BarChart },
+        { id: 'settings', label: 'Settings', icon: Settings }
+      ]
+    }
   ];
 
   const toggleMenu = () => {
@@ -415,56 +440,42 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside
-          className={`${menuOpen ? 'w-60' : 'w-16'} transition-all duration-300 ease-in-out border-r ${
+          className={`${menuOpen ? 'w-64' : 'w-16'} transition-all duration-300 ease-in-out border-r ${
             darkMode ? 'bg-[var(--polaris-bg-dark)] border-[var(--polaris-border-dark)]' : 'bg-white border-gray-200'
           } flex flex-col overflow-y-auto custom-scrollbar`}
         >
-          <div className="p-3">
-            <div className="space-y-1">
-              {/* Sidebar Menu Items */}
-              {menuItems
-                .filter(item => !item.adminOnly || userRole === 'admin') // Filter out admin-only items
-                .map(item => (
-                  <div key={item.id}>
-                    <button
-                      onClick={() => setActiveSection(item.id)}
-                      className={`w-full flex items-center ${
-                        !menuOpen ? 'justify-center' : ''
-                      } p-3 rounded text-lg ${
-                        activeSection === item.id
-                          ? `${darkMode ? 'bg-[var(--polaris-card-bg)] text-white' : 'bg-blue-50 text-blue-700 font-medium'}`
-                          : `${darkMode ? 'hover:bg-[var(--polaris-card-bg)] text-gray-400' : 'hover:bg-gray-100 text-gray-700'}`
-                      } transition-colors`}
-                    >
-                      <item.icon size={menuOpen ? 20 : 24} />
-                      {menuOpen && <span>{item.label}</span>}
-                    </button>
-
-                    {menuOpen && item.items && activeSection === item.id && (
-                      <div className="mt-1 ml-4 space-y-1">
-                        {item.items.map((subItem) => (
-                          <button
-                            key={subItem.id}
-                            onClick={() => setActiveSection(subItem.id)}
-                            className={`w-full flex items-center p-2.5 rounded text-base ${
-                              activeSection === subItem.id
-                                ? `${darkMode ? 'text-white font-medium' : 'text-blue-700 font-medium'}`
-                                : `${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-800'}`
-                            }`}
-                          >
-                            <Circle className={`h-2.5 w-2.5 mr-3 ${
-                              activeSection === subItem.id 
-                                ? (darkMode ? 'text-white fill-current' : 'text-blue-600 fill-current') 
-                                : ''
-                            }`} />
-                            <span>{subItem.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+          <div className="p-2">
+            {menuSections.map((section, sectionIndex) => (
+              <div key={sectionIndex} className="mb-4">
+                {menuOpen && (
+                  <div className={`px-3 py-2 text-xs font-semibold uppercase tracking-wider ${
+                    darkMode ? 'text-gray-500' : 'text-gray-400'
+                  }`}>
+                    {section.title}
                   </div>
-                ))}
-            </div>
+                )}
+                <div className="space-y-0.5">
+                  {section.items
+                    .filter(item => !item.adminOnly || userRole === 'admin')
+                    .map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveSection(item.id)}
+                        className={`w-full flex items-center ${
+                          !menuOpen ? 'justify-center px-2 py-3' : 'px-3 py-2'
+                        } rounded text-sm ${
+                          activeSection === item.id
+                            ? `${darkMode ? 'bg-[var(--polaris-card-bg)] text-white' : 'bg-blue-50 text-blue-700 font-medium'}`
+                            : `${darkMode ? 'hover:bg-[var(--polaris-card-bg)] text-gray-400' : 'hover:bg-gray-100 text-gray-700'}`
+                        } transition-colors`}
+                      >
+                        <item.icon size={menuOpen ? 16 : 20} className="min-w-5" />
+                        {menuOpen && <span className="ml-3 truncate">{item.label}</span>}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ))}
           </div>
         </aside>
 
@@ -474,7 +485,20 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
           <div className={`py-3 px-6 border-b ${darkMode ? 'border-[var(--polaris-border-dark)] bg-[var(--polaris-bg-dark)]' : 'border-gray-200 bg-white shadow-sm'}`}>
             <div className="flex items-center justify-between">
               <h2 className={`text-base font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                {menuItems.find(item => item.id === activeSection)?.label || 'Dashboard'}
+                {(() => {
+                  // Find the section containing the active item
+                  const section = menuSections.find(section => 
+                    section.items.some(item => item.id === activeSection)
+                  );
+                  
+                  // If found, return the item label
+                  if (section) {
+                    const activeItem = section.items.find(item => item.id === activeSection);
+                    return activeItem?.label || 'Dashboard';
+                  }
+                  
+                  return 'Dashboard';
+                })()}
               </h2>
               <div className="flex items-center gap-3">
                 <button
@@ -659,6 +683,26 @@ const AnalyticsScreen = ({ darkMode, stats }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [dateRange, setDateRange] = useState('month');
   const [isLoading, setIsLoading] = useState(false);
+  
+  // Mock data for department analytics
+  const departmentData = [
+    { name: 'Computer Science', students: 365, courses: 38, lecturers: 12, rooms: 8, utilization: 94 },
+    { name: 'Business Information Technology', students: 280, courses: 32, lecturers: 9, rooms: 6, utilization: 88 },
+    { name: 'Business Administration', students: 450, courses: 42, lecturers: 14, rooms: 10, utilization: 91 },
+    { name: 'Software Engineering', students: 180, courses: 28, lecturers: 8, rooms: 5, utilization: 85 },
+    { name: 'Mechanical Engineering', students: 240, courses: 32, lecturers: 11, rooms: 7, utilization: 89 },
+    { name: 'Electrical Engineering', students: 210, courses: 30, lecturers: 10, rooms: 7, utilization: 82 },
+  ];
+  
+  // Mock data for course distribution
+  const courseDistributionData = [
+    { department: 'Computer Science', firstYear: 9, secondYear: 12, thirdYear: 9, fourthYear: 8 },
+    { department: 'Business Information Technology', firstYear: 8, secondYear: 10, thirdYear: 8, fourthYear: 6 },
+    { department: 'Business Administration', firstYear: 12, secondYear: 11, thirdYear: 10, fourthYear: 9 },
+    { department: 'Software Engineering', firstYear: 7, secondYear: 8, thirdYear: 7, fourthYear: 6 },
+    { department: 'Mechanical Engineering', firstYear: 8, secondYear: 9, thirdYear: 8, fourthYear: 7 },
+    { department: 'Electrical Engineering', firstYear: 8, secondYear: 8, thirdYear: 7, fourthYear: 7 },
+  ];
   
   // Calculate growth rates (we'll simulate this with random values for now)
   // In a real implementation, you would compare current vs previous period data
