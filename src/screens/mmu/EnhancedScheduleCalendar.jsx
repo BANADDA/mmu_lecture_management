@@ -8,6 +8,18 @@ import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase/firebase';
 
+// Helper function to prevent duplicate toasts
+const preventDuplicateToast = (callback) => {
+  // Check if there are active toasts of the same type
+  const { toasts } = toast;
+  const activeToastIds = toasts.map(t => t.id);
+  
+  // Only proceed if there are no active toasts with the same message
+  if (activeToastIds.length === 0) {
+    callback();
+  }
+};
+
 const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Computer Science' }) => {
   const { user } = useAuth();
   const [currentView, setCurrentView] = useState('week'); // 'day', 'week', 'month', 'semester'
@@ -285,7 +297,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         setCollisions(uniqueConflicts);
       } catch (error) {
         console.error("Error fetching schedule data:", error);
-        toast.error("Failed to load schedule data");
+        preventDuplicateToast(() => {
+          toast.error("Failed to load schedule data");
+        });
       } finally {
         setIsLoading(false);
       }
@@ -370,7 +384,10 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     const formatType = currentView.charAt(0).toUpperCase() + currentView.slice(1);
     
     // Single toast notification
-    const toastId = toast.loading(`Preparing ${programType} ${formatType} schedule export...`);
+    let toastId;
+    preventDuplicateToast(() => {
+      toastId = toast.loading(`Preparing ${programType} ${formatType} schedule export...`);
+    });
     
     try {
       if (exportFormat === 'csv') {
@@ -387,7 +404,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         link.click();
         document.body.removeChild(link);
         
-        toast.success('CSV exported successfully!', { id: toastId });
+        preventDuplicateToast(() => {
+          toast.success('CSV exported successfully!', { id: toastId });
+        });
       } else if (exportFormat === 'html') {
         const content = generateHTML(events);
         const mime = 'text/html';
@@ -403,7 +422,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         link.click();
         document.body.removeChild(link);
         
-        toast.success('HTML exported successfully!', { id: toastId });
+        preventDuplicateToast(() => {
+          toast.success('HTML exported successfully!', { id: toastId });
+        });
       } else if (exportFormat === 'pdf') {
         // For PDF format using jsPDF - toast is handled inside exportToPDF
         toast.dismiss(toastId); // Dismiss this toast as exportToPDF will create its own
@@ -411,7 +432,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
       }
     } catch (error) {
       console.error('Export error:', error);
-      toast.error('Failed to export schedule. Please try again.', { id: toastId });
+      preventDuplicateToast(() => {
+        toast.error('Failed to export schedule. Please try again.', { id: toastId });
+      });
     }
     
     // Close the export modal
@@ -454,106 +477,57 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     console.log(`Rendering PDF with ${generatedEvents.length} events`);
     
     // Show loading toast
-    const toastId = toast.loading('Generating PDF, please wait...');
+    let toastId;
+    preventDuplicateToast(() => {
+      toastId = toast.loading('Generating PDF, please wait...');
+    });
     
     // Convert to canvas with html2canvas
-    setTimeout(() => {
-      html2canvas(container, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        logging: true,
-        backgroundColor: '#ffffff',
-        width: 1100,
-        height: container.offsetHeight,
-        onclone: (clonedDoc) => {
-          // Make sure all events are visible in the cloned document
-          const events = clonedDoc.querySelectorAll('.event');
-          events.forEach(e => {
-            e.style.display = 'block';
-            e.style.visibility = 'visible';
-            e.style.opacity = '1';
-          });
-        }
-      }).then(canvas => {
-        // Create PDF in landscape mode
-        const pdf = new jsPDF({
-          orientation: 'landscape',
-          unit: 'mm',
-          format: 'a4'
-        });
-        
-        // Get dimensions
-        const imgData = canvas.toDataURL('image/png');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        
-        // Calculate dimensions for the image to take up 90% of page width
-        const imgWidth = canvas.width;
-        const imgHeight = canvas.height;
-        const ratio = Math.min((pageWidth * 0.95) / imgWidth, pageHeight / imgHeight);
-        
-        // Position image on page
-        const imgX = (pageWidth - (imgWidth * ratio)) / 2;
-        const imgY = 5;
-        
-        // For single page PDF
-        if (imgHeight * ratio <= pageHeight - 10) {
-          pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio);
-        } 
-        // For multi-page PDF
-        else {
-          // Calculate how many pages we need
-          const pageCount = Math.ceil((imgHeight * ratio) / (pageHeight - 10));
-          
-          // For each page
-          for (let i = 0; i < pageCount; i++) {
-            if (i > 0) {
-              pdf.addPage();
-            }
-            
-            // Calculate which portion of the image to use on this page
-            const sourceHeight = imgHeight / pageCount;
-            const sourceY = i * sourceHeight;
-            
-            // Add this portion of the image
-            pdf.addImage(
-              imgData, 
-              'PNG', 
-              imgX, 
-              imgY, 
-              imgWidth * ratio, 
-              imgHeight * ratio, 
-              null, 
-              'FAST',
-              0, 
-              {
-                srcX: 0,
-                srcY: sourceY,
-                srcWidth: imgWidth,
-                srcHeight: sourceHeight
-              }
-            );
-            
-            // Add page number
-            pdf.setFontSize(10);
-            pdf.setTextColor(100, 100, 100);
-            pdf.text(`Page ${i + 1} of ${pageCount}`, pageWidth - 30, pageHeight - 5);
-          }
-        }
-        
-        // Save the PDF
-        pdf.save(filename);
-        
-        // Clean up
-        document.body.removeChild(container);
+    html2canvas(container, {
+      scale: 1,
+      logging: false,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff'
+    }).then(canvas => {
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      // Add the canvas as an image
+      const imgData = canvas.toDataURL('image/png');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+      const imgX = (pdfWidth - imgWidth * ratio) / 2;
+      const imgY = 10;
+      
+      pdf.addImage(imgData, 'PNG', imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+      
+      // Save the PDF
+      pdf.save(filename);
+      
+      // Clean up - remove the temporary container
+      document.body.removeChild(container);
+      
+      // Show success toast
+      preventDuplicateToast(() => {
         toast.success('PDF generated successfully!', { id: toastId });
-      }).catch(error => {
-        console.error('Error generating PDF:', error);
-        document.body.removeChild(container);
+      });
+    }).catch(error => {
+      console.error("PDF generation error:", error);
+      preventDuplicateToast(() => {
         toast.error('Failed to generate PDF. Please try again.', { id: toastId });
       });
-    }, 300); // Small delay to ensure DOM is fully rendered
+      
+      // Clean up - remove the temporary container
+      document.body.removeChild(container);
+    });
   };
   
   // Base styles for all PDFs - use fixed width of 1100px
@@ -2569,7 +2543,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                     <button
                       onClick={() => {
                         // Show modal to resolve conflict
-                        toast.info("Conflict resolution assistant would open here");
+                        preventDuplicateToast(() => {
+                          toast.success("Conflict resolution assistant would open here");
+                        });
                       }}
                       className={`text-xs px-3 py-1 rounded-md ${
                         alert.type === 'lecturer' 
@@ -2624,7 +2600,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     // Validate required fields
     if (!currentEvent.courseId || !currentEvent.roomId || !currentEvent.startTime || 
         !currentEvent.endTime || !currentEvent.sessionType || !currentEvent.dayOfWeek || !currentEvent.eventDate) {
-      toast.error('Please fill all required fields');
+      preventDuplicateToast(() => {
+        toast.error('Please fill all required fields');
+      });
       return;
     }
     
@@ -2634,7 +2612,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     const semEndDate = new Date(semesterDates.endDate);
     
     if (eventDate < semStartDate || eventDate > semEndDate) {
-      toast.error(`Event date must be within the semester date range (${semesterDates.startDate} to ${semesterDates.endDate})`);
+      preventDuplicateToast(() => {
+        toast.error(`Event date must be within the semester date range (${semesterDates.startDate} to ${semesterDates.endDate})`);
+      });
       return;
     }
     
@@ -2648,7 +2628,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
       
       // Check if course belongs to the HoD's department or is cross-cutting
       if (!isCrossCutting && courseDepartment !== userDepartment) {
-        toast.error(`As a Head of Department, you can only schedule lectures for courses in your department (${userDepartment}) or cross-cutting courses.`);
+        preventDuplicateToast(() => {
+          toast.error(`As a Head of Department, you can only schedule lectures for courses in your department (${userDepartment}) or cross-cutting courses.`);
+        });
         return;
       }
     }
@@ -2657,7 +2639,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     const conflicts = checkSchedulingConflicts(currentEvent);
     if (conflicts.length > 0) {
       // Show conflicts but allow user to proceed if they want
-      toast.error(`Warning: ${conflicts.length} scheduling conflicts detected. Review them in the conflicts section.`);
+      preventDuplicateToast(() => {
+        toast.error(`Warning: ${conflicts.length} scheduling conflicts detected. Review them in the conflicts section.`);
+      });
     }
     
     try {
@@ -2715,7 +2699,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
           }
         }));
         
-        toast.info(`Course scheduled for ${selectedCourse.crossCuttingPrograms.length} additional programs as cross-cutting course.`);
+        preventDuplicateToast(() => {
+          toast.success(`Course scheduled for ${selectedCourse.crossCuttingPrograms.length} additional programs as cross-cutting course.`);
+        });
       }
       
       // Update scheduleEvents state
@@ -2726,18 +2712,22 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         prev.filter(lecture => lecture.id !== currentEvent.courseId)
       );
       
-      toast.success(`Lecture for ${currentEvent.title} has been scheduled as ${
-        currentEvent.sessionType === 'LH' ? 'Lecture Hour' :
-        currentEvent.sessionType === 'PH' ? 'Practical Hour' :
-        currentEvent.sessionType === 'TH' ? 'Tutorial Hour' :
-        'Clinical Hour'
-      }`);
+      preventDuplicateToast(() => {
+        toast.success(`Lecture for ${currentEvent.title} has been scheduled as ${
+          currentEvent.sessionType === 'LH' ? 'Lecture Hour' :
+          currentEvent.sessionType === 'PH' ? 'Practical Hour' :
+          currentEvent.sessionType === 'TH' ? 'Tutorial Hour' :
+          'Clinical Hour'
+        }`);
+      });
       
       // Reset form and close modal
       resetAndCloseModal();
     } catch (error) {
       console.error("Error adding schedule event:", error);
-      toast.error("Failed to add schedule event");
+      preventDuplicateToast(() => {
+        toast.error("Failed to add schedule event");
+      });
     }
   };
 
@@ -2768,10 +2758,14 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         }
       }
       
-      toast.success("Schedule event deleted successfully");
+      preventDuplicateToast(() => {
+        toast.success("Schedule event deleted successfully");
+      });
     } catch (error) {
       console.error("Error deleting schedule event:", error);
-      toast.error("Failed to delete schedule event");
+      preventDuplicateToast(() => {
+        toast.error("Failed to delete schedule event");
+      });
     }
   };
 
@@ -2779,7 +2773,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   const handleUpdateSemesterDates = async () => {
     // Validate dates
     if (new Date(semesterDates.startDate) >= new Date(semesterDates.endDate)) {
-      toast.error('End date must be after start date');
+      preventDuplicateToast(() => {
+        toast.error('End date must be after start date');
+      });
       return;
     }
     
@@ -2800,11 +2796,15 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
       // Use setDoc with merge option to create if it doesn't exist or update if it does
       await setDoc(settingsRef, semesterData, { merge: true });
       
-      toast.success(`Semester dates set from ${semesterDates.startDate} to ${semesterDates.endDate}`);
+      preventDuplicateToast(() => {
+        toast.success(`Semester dates set from ${semesterDates.startDate} to ${semesterDates.endDate}`);
+      });
       setShowSemesterModal(false);
     } catch (error) {
       console.error("Error updating semester dates:", error);
-      toast.error(`Failed to update semester dates: ${error.message}`);
+      preventDuplicateToast(() => {
+        toast.error(`Failed to update semester dates: ${error.message}`);
+      });
     }
   };
 

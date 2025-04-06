@@ -31,6 +31,7 @@ import DepartmentsManagement from './mmu/DepartmentsManagement';
 import EnhancedScheduleCalendar from './mmu/EnhancedScheduleCalendar';
 import ProgramsManagement from './mmu/ProgramsManagement';
 import RoomManagement from './mmu/RoomManagement';
+import SettingsScreen from './mmu/SettingsScreen';
 import UsersManagement from './mmu/UsersManagement';
 
 const MMUDashboard = ({ darkMode, updateDarkMode }) => {
@@ -226,6 +227,8 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
         return <EnhancedScheduleCalendar darkMode={darkMode} userRole={userRole} userDepartment={user?.department} />;
       case 'analytics':
         return <AnalyticsScreen darkMode={darkMode} stats={stats} />;
+      case 'settings':
+        return <SettingsScreen darkMode={darkMode} userRole={userRole} />;
       default:
         return renderAdminDashboard();
     }
