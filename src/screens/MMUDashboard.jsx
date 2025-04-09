@@ -1,24 +1,24 @@
 import { collection, getCountFromServer, onSnapshot, query, where } from 'firebase/firestore';
 import {
-  BarChart,
-  BookMarked,
-  BookOpen,
-  Building,
-  Calendar,
-  Clock,
-  Download,
-  Filter,
-  Home,
-  LogOut,
-  Menu,
-  Moon,
-  RefreshCcw,
-  Settings,
-  Sun,
-  User,
-  UserCog,
-  UserPlus,
-  Users
+    BarChart,
+    BookMarked,
+    BookOpen,
+    Building,
+    Calendar,
+    Clock,
+    Download,
+    Filter,
+    Home,
+    LogOut,
+    Menu,
+    Moon,
+    RefreshCcw,
+    Settings,
+    Sun,
+    User,
+    UserCog,
+    UserPlus,
+    Users
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useState } from 'react';
@@ -29,6 +29,7 @@ import AllocationsManagement from './mmu/AllocationsManagement';
 import CoursesManagement from './mmu/CoursesManagement';
 import DepartmentsManagement from './mmu/DepartmentsManagement';
 import EnhancedScheduleCalendar from './mmu/EnhancedScheduleCalendar';
+import FacultiesManagement from './mmu/FacultiesManagement';
 import ProgramsManagement from './mmu/ProgramsManagement';
 import RoomManagement from './mmu/RoomManagement';
 import SettingsScreen from './mmu/SettingsScreen';
@@ -40,6 +41,7 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(null);
 
   // Use the role from the authenticated user
   const userRole = user?.role || 'admin';
@@ -173,6 +175,7 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
     {
       title: "Resource Management",
       items: [
+        { id: 'faculties', label: 'Faculties', icon: Building },
         { id: 'departments', label: 'Departments', icon: Building },
         { id: 'programs', label: 'Programs', icon: BookMarked },
         { id: 'courses', label: 'Course Units', icon: BookOpen },
@@ -213,10 +216,22 @@ const MMUDashboard = ({ darkMode, updateDarkMode }) => {
     switch(activeSection) {
       case 'users':
         return <UsersManagement darkMode={darkMode} userRole={userRole} />;
+      case 'faculties':
+        return <FacultiesManagement darkMode={darkMode} userRole={userRole} />;
       case 'departments':
-        return <DepartmentsManagement darkMode={darkMode} userRole={userRole} />;
+        return <DepartmentsManagement 
+          darkMode={darkMode} 
+          userRole={userRole} 
+          setActiveSection={setActiveSection} 
+          setSelectedProgramDept={setSelectedDepartmentId} 
+        />;
       case 'programs':
-        return <ProgramsManagement darkMode={darkMode} userRole={userRole} />;
+        return <ProgramsManagement 
+          darkMode={darkMode} 
+          userRole={userRole} 
+          selectedDepartmentId={selectedDepartmentId} 
+          onDepartmentSelected={(id) => setSelectedDepartmentId(id)}
+        />;
       case 'courses':
         return <CoursesManagement darkMode={darkMode} userRole={userRole} />;
       case 'rooms':

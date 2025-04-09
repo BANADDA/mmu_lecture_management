@@ -1,19 +1,19 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import {
-  BookOpen,
-  Building,
-  CheckCircle,
-  Edit,
-  Filter,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Trash2,
-  Users,
-  XCircle
+    BookOpen,
+    Building,
+    CheckCircle,
+    Edit,
+    Filter,
+    MoreHorizontal,
+    Plus,
+    Search,
+    Trash2,
+    Users,
+    XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase/firebase';
@@ -53,6 +53,21 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
   // State for courses and programs
   const [courses, setCourses] = useState([]);
   const [programs, setPrograms] = useState([]);
+
+  // First, add a new state for editable course codes
+  const [editingCourseCode, setEditingCourseCode] = useState(null);
+  const [editedCode, setEditedCode] = useState('');
+
+  // Add new state for managing multiple cross-cutting programs
+  const [courseCrossCutting, setCourseCrossCutting] = useState({});
+
+  // Add new state variables for cross-cutting modal
+  const [showCrossCuttingModal, setShowCrossCuttingModal] = useState(false);
+  const [selectedCrossCuttingPrograms, setSelectedCrossCuttingPrograms] = useState([]);
+
+  // Update state for multi-select dropdown
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
   // Load departments
   useEffect(() => {
@@ -193,6 +208,11 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
   });
 
   const handleFormChange = (field, value) => {
+    if (field === 'isCrossCutting' && value === true) {
+      // When checking the cross-cutting checkbox, open the modal
+      setShowCrossCuttingModal(true);
+    }
+    
     if (field === 'programId') {
       // When program changes, update the course code prefix and department
       const selectedProgram = programs.find(p => p.id === value);
@@ -297,6 +317,7 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
         courseNumber: currentCourse.courseNumber,
         isActive: currentCourse.isActive,
         isCrossCutting: currentCourse.isCrossCutting,
+        crossCuttingPrograms: currentCourse.isCrossCutting ? selectedCrossCuttingPrograms : [],
         students: editMode ? (currentCourse.students || 0) : 0,
         lecturer: currentCourse.lecturer || 'Not Assigned',
         updatedAt: serverTimestamp()
@@ -427,6 +448,14 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
         createdAt: courseToEdit.createdAt,
         updatedAt: courseToEdit.updatedAt
       });
+      
+      // Load cross-cutting programs for editing
+      if (courseToEdit.crossCuttingPrograms && courseToEdit.crossCuttingPrograms.length) {
+        setSelectedCrossCuttingPrograms(courseToEdit.crossCuttingPrograms);
+      } else {
+        setSelectedCrossCuttingPrograms([]);
+      }
+      
       setEditMode(true);
       setEditCourseId(courseId);
       setShowAddCourseModal(true);
@@ -460,8 +489,10 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
       createdAt: null,
       updatedAt: null
     });
+    setSelectedCrossCuttingPrograms([]);
     setEditMode(false);
     setShowAddCourseModal(false);
+    setShowCrossCuttingModal(false);
   };
 
   const getCodeExplanation = (code) => {
@@ -476,6 +507,149 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
     const courseNum = numericPart.substring(2);
     
     return `[${numericPart}] - Year ${year}, semester ${semester} course ${courseNum}`;
+  };
+
+  // Add a function to update course code
+  const handleUpdateCourseCode = async (courseId, newCode) => {
+    try {
+      setIsLoading(true);
+      const courseRef = doc(db, 'courses', courseId);
+      await updateDoc(courseRef, {
+        code: newCode.toUpperCase(),
+        updatedAt: serverTimestamp()
+      });
+      toast.success("Course code updated successfully");
+      setEditingCourseCode(null);
+    } catch (error) {
+      console.error("Error updating course code:", error);
+      toast.error("Failed to update course code");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Update the handleCrossCuttingUpdate function to handle multiple programs
+  const handleCrossCuttingUpdate = async (courseId, programId, year, operation = 'add') => {
+    try {
+      setIsLoading(true);
+      
+      // Get current course cross-cutting programs
+      let currentPrograms = [...(courseCrossCutting[courseId] || [])];
+      
+      if (operation === 'add') {
+        // Add new program if not already in the list
+        if (!currentPrograms.some(p => p.programId === programId)) {
+          currentPrograms.push({ programId, yearOffered: parseInt(year) });
+        }
+      } else if (operation === 'remove') {
+        // Remove program from the list
+        currentPrograms = currentPrograms.filter(p => p.programId !== programId);
+      }
+      
+      // Update local state
+      setCourseCrossCutting({
+        ...courseCrossCutting,
+        [courseId]: currentPrograms
+      });
+      
+      // Update in Firebase
+      const courseRef = doc(db, 'courses', courseId);
+      await updateDoc(courseRef, {
+        crossCuttingPrograms: currentPrograms,
+        isCrossCutting: currentPrograms.length > 0,
+        updatedAt: serverTimestamp()
+      });
+      
+      if (operation === 'add') {
+        toast.success("Cross-cutting program added");
+      } else {
+        toast.success("Cross-cutting program removed");
+      }
+    } catch (error) {
+      console.error("Error updating cross-cutting information:", error);
+      toast.error("Failed to update cross-cutting information");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load cross-cutting programs for courses
+  useEffect(() => {
+    if (courses.length) {
+      // Initialize cross-cutting programs from loaded courses
+      const crossCuttingData = {};
+      courses.forEach(course => {
+        if (course.crossCuttingPrograms && course.crossCuttingPrograms.length) {
+          crossCuttingData[course.id] = course.crossCuttingPrograms;
+        } else {
+          crossCuttingData[course.id] = [];
+        }
+      });
+      setCourseCrossCutting(crossCuttingData);
+    }
+  }, [courses]);
+
+  // Add a download report function
+  const downloadCourseReport = (filters = {}) => {
+    // In a real implementation, this would generate a report
+    // For now we'll just simulate it
+    toast.success("Downloading course report...");
+    const queryParams = new URLSearchParams(filters).toString();
+    window.open(`/api/reports/courses?${queryParams}`, '_blank');
+  };
+
+  // Update the addCrossCuttingProgram function to toggle program selection
+  const toggleCrossCuttingProgram = (programId) => {
+    // Check if the program is already selected
+    const existingIndex = selectedCrossCuttingPrograms.findIndex(p => p.programId === programId);
+    
+    if (existingIndex >= 0) {
+      // Program exists, remove it
+      setSelectedCrossCuttingPrograms(
+        selectedCrossCuttingPrograms.filter(p => p.programId !== programId)
+      );
+    } else {
+      // Program doesn't exist, add it with default year 1
+      const program = programs.find(p => p.id === programId);
+      if (program) {
+        setSelectedCrossCuttingPrograms([
+          ...selectedCrossCuttingPrograms,
+          { programId, yearOffered: 1 }
+        ]);
+      }
+    }
+  };
+
+  // Update handler for year change
+  const updateCrossCuttingYear = (programId, year) => {
+    setSelectedCrossCuttingPrograms(
+      selectedCrossCuttingPrograms.map(p => 
+        p.programId === programId 
+          ? { ...p, yearOffered: parseInt(year) } 
+          : p
+      )
+    );
+  };
+
+  // Add click outside handler to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Add missing removeCrossCuttingProgram function
+  const removeCrossCuttingProgram = (programId) => {
+    setSelectedCrossCuttingPrograms(
+      selectedCrossCuttingPrograms.filter(p => p.programId !== programId)
+    );
   };
 
   // Render course details view when a course is selected
@@ -762,70 +936,294 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
 
       {/* Courses grid */}
       {!isLoading && filteredCourses.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-6 px-4">
-          {filteredCourses.map(course => (
-            <div 
-              key={course.id} 
-              className={`rounded-lg overflow-hidden ${
-                darkMode 
-                  ? 'bg-gray-900 border border-gray-800' 
-                  : 'bg-white border border-gray-200'
-              } transition-all shadow-lg`}
-            >
-              <div className="p-5">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                      {course.code}
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">{course.departmentName}</p>
-                  </div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                    course.isActive
-                      ? 'bg-green-900/20 text-green-500 border border-green-700/20' 
-                      : 'bg-yellow-900/20 text-yellow-500 border border-yellow-700/20'
-                  }`}>
-                    {course.isActive ? 'Active' : 'Inactive'}
-                  </div>
-                </div>
-
-                <h4 className={`text-lg mb-3 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  {course.name}
-                </h4>
-
-                <div className="text-3xl font-bold text-blue-500 mb-5">
-                  {course.creditUnits} <span className="text-sm opacity-70">Units</span>
-                </div>
-
-                <div className="flex justify-between items-center pt-3 border-t border-gray-800">
-                  <div className="flex items-center">
-                    <Users className="h-4 w-4 text-gray-500 mr-1" />
-                    <span className="text-sm text-gray-500">
-                      Lecturer: {course.lecturer !== 'Not Assigned' ? 
-                        <span className={`font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>{course.lecturer.split(' ')[1]}</span> : 
-                        <span className="text-yellow-500">Not Assigned</span>}
-                    </span>
-                  </div>
-
-                  <div className="flex space-x-1">
-                    <button 
-                      onClick={() => handleEditCourse(course.id)}
-                      className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleViewCourse(course.id)}
-                      className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400"
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+        <>
+          {/* Report and Actions Bar */}
+          <div className="flex flex-wrap justify-between items-center mb-4 px-4">
+            <div className="text-sm flex gap-2 items-center my-2">
+              <span className={darkMode ? 'text-gray-300' : 'text-gray-600'}>
+                <span className="font-semibold">{filteredCourses.length}</span> course {filteredCourses.length === 1 ? 'unit' : 'units'} found
+              </span>
+              
+              <button
+                onClick={() => downloadCourseReport({ department: selectedDepartment })}
+                className={`flex items-center text-xs px-3 py-1.5 rounded-full ${
+                  darkMode 
+                    ? 'bg-blue-900/20 text-blue-400 hover:bg-blue-900/40 border border-blue-800/30' 
+                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Download Report
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
+          
+          {/* Five cards per row grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 mb-6 px-4">
+            {filteredCourses.map(course => {
+              // Determine color based on year
+              const yearColors = [
+                { bg: 'bg-blue-100', accent: 'text-blue-600', dark: 'bg-blue-900/20', darkAccent: 'text-blue-400' },
+                { bg: 'bg-purple-100', accent: 'text-purple-600', dark: 'bg-purple-900/20', darkAccent: 'text-purple-400' },
+                { bg: 'bg-emerald-100', accent: 'text-emerald-600', dark: 'bg-emerald-900/20', darkAccent: 'text-emerald-400' },
+                { bg: 'bg-amber-100', accent: 'text-amber-600', dark: 'bg-amber-900/20', darkAccent: 'text-amber-400' },
+                { bg: 'bg-rose-100', accent: 'text-rose-600', dark: 'bg-rose-900/20', darkAccent: 'text-rose-400' },
+              ];
+              const colorIndex = (course.yearOfStudy - 1) % yearColors.length;
+              const colorScheme = yearColors[colorIndex];
+              
+              return (
+                <div 
+                  key={course.id} 
+                  className={`rounded-lg overflow-hidden flex flex-col ${
+                    darkMode 
+                      ? 'bg-gray-800 border border-gray-700' 
+                      : 'bg-white border border-gray-200'
+                  } transition-all shadow-sm hover:shadow-md`}
+                >
+                  <div className={`p-4 ${darkMode ? colorScheme.dark : colorScheme.bg}`}>
+                    <div className="flex justify-between items-center mb-2">
+                      {/* Editable Course Code */}
+                      <div className={`font-medium text-sm ${darkMode ? colorScheme.darkAccent : colorScheme.accent}`}>
+                        {editingCourseCode === course.id ? (
+                          <form onSubmit={(e) => {
+                            e.preventDefault();
+                            handleUpdateCourseCode(course.id, editedCode);
+                          }}>
+                            <input 
+                              type="text" 
+                              value={editedCode}
+                              onChange={(e) => setEditedCode(e.target.value)}
+                              className={`w-full px-2 py-1 rounded text-center ${
+                                darkMode 
+                                  ? 'bg-gray-700/50 border-gray-600 text-white' 
+                                  : 'bg-white/80 border-gray-200 text-gray-800'
+                              } border`}
+                              autoFocus
+                              onBlur={() => {
+                                if (editedCode !== course.code) {
+                                  handleUpdateCourseCode(course.id, editedCode);
+                                } else {
+                                  setEditingCourseCode(null);
+                                }
+                              }}
+                            />
+                          </form>
+                        ) : (
+                          <div 
+                            onClick={() => {
+                              setEditingCourseCode(course.id);
+                              setEditedCode(course.code);
+                            }}
+                            className="cursor-pointer text-center px-2 py-1 hover:bg-opacity-50 rounded"
+                            title="Click to edit course code"
+                          >
+                            {course.code}
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className={`text-xs px-2 py-1 rounded-full font-medium ${
+                        darkMode ? 'bg-gray-700/50 text-gray-300' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {course.creditUnits} {course.creditUnits === 1 ? 'unit' : 'units'}
+                      </div>
+                    </div>
+                    
+                    <h4 className={`font-bold text-base leading-tight mb-1 line-clamp-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      {course.name}
+                    </h4>
+                  </div>
+                  
+                  <div className="p-4 flex-1 flex flex-col">
+                    <div className="mb-2">
+                      <div className={`text-xs mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Year & Semester</div>
+                      <div className="flex items-center">
+                        <div className={`flex items-center mr-3 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                          <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 mr-1 ${darkMode ? colorScheme.darkAccent : colorScheme.accent}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span>Year {course.yearOfStudy}</span>
+                        </div>
+                        <div className={`flex items-center ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                          <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 mr-1 ${darkMode ? colorScheme.darkAccent : colorScheme.accent}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                          </svg>
+                          <span>Sem {course.semester}</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mb-2">
+                      <div className={`text-xs mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Lecturer</div>
+                      <div className={`flex items-center ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                        {course.lecturer !== 'Not Assigned' ? (
+                          <>
+                            <Users className={`h-3 w-3 mr-1 ${darkMode ? 'text-green-400' : 'text-green-600'}`} />
+                            <span className="text-sm truncate">{course.lecturer}</span>
+                          </>
+                        ) : (
+                          <span className="text-sm text-gray-400">Not Assigned</span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="mt-auto">
+                      <div className={`text-xs mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Cross-Cutting Programs</div>
+                      
+                      {/* Show selected cross-cutting programs */}
+                      {(courseCrossCutting[course.id]?.length > 0) && (
+                        <div className={`mb-2 p-2 rounded-md ${
+                          darkMode ? 'bg-gray-700/30' : 'bg-gray-50'
+                        }`}>
+                          <ul className="space-y-1">
+                            {courseCrossCutting[course.id].map(crossCut => {
+                              const program = programs.find(p => p.id === crossCut.programId);
+                              if (!program) return null;
+                              return (
+                                <li key={crossCut.programId} className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 mr-1 ${
+                                      darkMode ? 'text-blue-400' : 'text-blue-600'
+                                    }`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                                        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                    </svg>
+                                    <span className={darkMode ? 'text-white' : 'text-gray-800'}>
+                                      {program.name} (Year {crossCut.yearOffered})
+                                    </span>
+                                  </div>
+                                  <button 
+                                    onClick={() => handleCrossCuttingUpdate(course.id, crossCut.programId, crossCut.yearOffered, 'remove')}
+                                    className={`ml-1 p-0.5 rounded-full ${
+                                      darkMode ? 'hover:bg-gray-600 text-gray-400' : 'hover:bg-gray-200 text-gray-500'
+                                    }`}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+                      
+                      {/* Add new cross-cutting program */}
+                      <div className="flex gap-2">
+                        <select 
+                          id={`program-${course.id}`}
+                          className={`flex-1 px-2 py-1 text-xs rounded border ${
+                            darkMode 
+                              ? 'bg-gray-700 border-gray-600 text-gray-300' 
+                              : 'bg-gray-50 border-gray-200 text-gray-700'
+                          }`}
+                          defaultValue=""
+                        >
+                          <option value="" disabled>Select program</option>
+                          {programs
+                            .filter(p => 
+                              p.id !== course.programId && 
+                              !courseCrossCutting[course.id]?.some(cp => cp.programId === p.id)
+                            )
+                            .map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))
+                          }
+                        </select>
+                        
+                        <select 
+                          id={`year-${course.id}`}
+                          className={`w-20 px-2 py-1 text-xs rounded border ${
+                            darkMode 
+                              ? 'bg-gray-700 border-gray-600 text-gray-300' 
+                              : 'bg-gray-50 border-gray-200 text-gray-700'
+                          }`}
+                          defaultValue="1"
+                        >
+                          {[1, 2, 3, 4].map(year => (
+                            <option key={year} value={year}>Year {year}</option>
+                          ))}
+                        </select>
+                        
+                        <button
+                          onClick={() => {
+                            const programSelect = document.getElementById(`program-${course.id}`);
+                            const yearSelect = document.getElementById(`year-${course.id}`);
+                            
+                            if (programSelect && programSelect.value) {
+                              handleCrossCuttingUpdate(
+                                course.id, 
+                                programSelect.value, 
+                                yearSelect.value,
+                                'add'
+                              );
+                              
+                              // Reset the dropdown
+                              programSelect.value = "";
+                            }
+                          }}
+                          className={`px-2 py-1 rounded ${
+                            darkMode 
+                              ? 'bg-blue-900/20 text-blue-400 hover:bg-blue-900/40 border border-blue-800/30' 
+                              : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                          }`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className={`flex border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                    <button
+                      onClick={() => handleEditCourse(course.id)}
+                      className={`flex-1 py-2 text-xs font-medium border-r ${
+                        darkMode 
+                          ? 'border-gray-700 hover:bg-gray-700 text-gray-300' 
+                          : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                      }`}
+                    >
+                      <Edit className="h-3.5 w-3.5 mx-auto" />
+                    </button>
+                    
+                    <button
+                      onClick={() => handleViewCourse(course.id)}
+                      className={`flex-1 py-2 text-xs font-medium border-r ${
+                        darkMode 
+                          ? 'border-gray-700 hover:bg-gray-700 text-gray-300' 
+                          : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                      }`}
+                    >
+                      <MoreHorizontal className="h-3.5 w-3.5 mx-auto" />
+                    </button>
+                    
+                    {(userRole === 'admin' || userRole === 'hod') && (
+                      <button
+                        onClick={() => {
+                          setEditCourseId(course.id);
+                          setShowDeleteConfirmation(true);
+                        }}
+                        className={`flex-1 py-2 text-xs font-medium ${
+                          darkMode 
+                            ? 'hover:bg-red-900/20 text-red-400' 
+                            : 'hover:bg-red-50 text-red-600'
+                        }`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mx-auto" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* Add/Edit course modal */}
@@ -1069,6 +1467,189 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                   disabled={deletingCourse}
                 >
                   {deletingCourse ? 'Deleting...' : 'Delete Course'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cross-Cutting Programs Selection Modal */}
+      {showCrossCuttingModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" onClick={() => setShowCrossCuttingModal(false)}>
+              <div className="absolute inset-0 bg-black opacity-50"></div>
+            </div>
+
+            <div className={`inline-block align-bottom rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full ${
+              darkMode ? 'bg-gray-800' : 'bg-white'
+            }`}>
+              {/* Modal header */}
+              <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    Select Cross-Cutting Programs
+                  </h3>
+                  <button 
+                    onClick={() => setShowCrossCuttingModal(false)}
+                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-600'}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-6 w-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Modal body */}
+              <div className="px-6 py-4">
+                <p className={`mb-4 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                  Select programs where this course unit will be cross-cutting. You can add multiple programs.
+                </p>
+                
+                {/* Program selection form */}
+                <div className="mb-4">
+                  <div className="relative" ref={dropdownRef}>
+                    <button
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className={`w-full p-2 rounded-md border text-left flex justify-between items-center ${
+                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                      }`}
+                    >
+                      <span>
+                        {selectedCrossCuttingPrograms.length > 0 
+                          ? `${selectedCrossCuttingPrograms.length} program${selectedCrossCuttingPrograms.length !== 1 ? 's' : ''} selected` 
+                          : 'Select Program'}
+                      </span>
+                      <svg className={`h-5 w-5 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    
+                    {/* Dropdown panel with checkboxes */}
+                    {isDropdownOpen && (
+                      <div className={`absolute z-10 mt-1 w-full rounded-md shadow-lg ${
+                        darkMode ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'
+                      }`}>
+                        <div className="py-1 max-h-60 overflow-auto">
+                          {programs
+                            .filter(p => p.id !== currentCourse.programId)
+                            .map(program => {
+                              const isSelected = selectedCrossCuttingPrograms.some(p => p.programId === program.id);
+                              return (
+                                <div 
+                                  key={program.id}
+                                  className={`px-3 py-2 cursor-pointer ${
+                                    isSelected 
+                                      ? (darkMode ? 'bg-blue-900/40' : 'bg-blue-100') 
+                                      : (darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100')
+                                  }`}
+                                  onClick={() => toggleCrossCuttingProgram(program.id)}
+                                >
+                                  <div className="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {}}
+                                      className="h-4 w-4 mr-2"
+                                    />
+                                    <span className={darkMode ? 'text-white' : 'text-gray-800'}>
+                                      {program.name}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Selected programs list with year selection */}
+                {selectedCrossCuttingPrograms.length > 0 ? (
+                  <div className={`mb-4 p-3 rounded-md ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                    <h4 className={`font-medium mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                      Selected Programs:
+                    </h4>
+                    <ul className="space-y-2">
+                      {selectedCrossCuttingPrograms.map(cp => {
+                        const program = programs.find(p => p.id === cp.programId);
+                        if (!program) return null;
+                        
+                        return (
+                          <li key={cp.programId} className="flex justify-between items-center">
+                            <div className={`flex items-center flex-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                              <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 mr-2 ${
+                                darkMode ? 'text-blue-400' : 'text-blue-600'
+                              }`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span className="truncate">{program.name}</span>
+                            </div>
+                            
+                            <div className="flex items-center ml-2">
+                              <select 
+                                value={cp.yearOffered}
+                                onChange={(e) => updateCrossCuttingYear(cp.programId, e.target.value)}
+                                className={`ml-2 p-1 text-sm rounded border ${
+                                  darkMode ? 'bg-gray-800 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-800'
+                                }`}
+                              >
+                                <option value="1">Year 1</option>
+                                <option value="2">Year 2</option>
+                                <option value="3">Year 3</option>
+                                <option value="4">Year 4</option>
+                              </select>
+                              
+                              <button 
+                                onClick={() => removeCrossCuttingProgram(cp.programId)}
+                                className={`ml-2 p-1 rounded-full ${
+                                  darkMode ? 'hover:bg-gray-600 text-gray-400' : 'hover:bg-gray-300 text-gray-600'
+                                }`}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className={`mb-4 p-4 text-center rounded-md ${
+                    darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    No cross-cutting programs selected yet
+                  </div>
+                )}
+              </div>
+              
+              {/* Modal footer */}
+              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-end gap-2`}>
+                <button 
+                  onClick={() => {
+                    setCurrentCourse(prev => ({
+                      ...prev,
+                      isCrossCutting: false
+                    }));
+                    setShowCrossCuttingModal(false);
+                  }}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${
+                    darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+                >
+                  Cancel
+                </button>
+                
+                <button 
+                  onClick={() => setShowCrossCuttingModal(false)}
+                  className={`px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700`}
+                >
+                  Done
                 </button>
               </div>
             </div>
