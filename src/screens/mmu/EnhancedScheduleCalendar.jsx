@@ -12,6 +12,14 @@ import { db } from '../../firebase/firebase';
 const preventDuplicateToast = (callback) => {
   // Check if there are active toasts of the same type
   const { toasts } = toast;
+  
+  // Safely check if toasts exists and has a map method
+  if (!toasts || !Array.isArray(toasts)) {
+    // If toasts is undefined or not an array, just execute the callback
+    callback();
+    return;
+  }
+  
   const activeToastIds = toasts.map(t => t.id);
   
   // Only proceed if there are no active toasts with the same message
@@ -34,6 +42,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   });
   const [showSemesterModal, setShowSemesterModal] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState(userDepartment);
+  const [selectedFaculty, setSelectedFaculty] = useState('all'); // Add new state for faculty filter
   const [currentEvent, setCurrentEvent] = useState({
     title: '',
     courseId: '',
@@ -57,6 +66,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   const [lecturers, setLecturers] = useState([]);
   const [scheduleEvents, setScheduleEvents] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [faculties, setFaculties] = useState([]); // Add faculties state
   const [programsList, setProgramsList] = useState([]);
   const [selectedProgram, setSelectedProgram] = useState('all');
   const [unscheduledLectures, setUnscheduledLectures] = useState([]);
@@ -64,6 +74,54 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   const [isLoading, setIsLoading] = useState(true);
   const [exportFormat, setExportFormat] = useState('csv');
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showEventDetailModal, setShowEventDetailModal] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  
+  // Generate a consistent color based on the course ID
+  const getCourseColor = (courseId) => {
+    if (!courseId) return darkMode ? 'bg-gray-700' : 'bg-gray-100';
+    
+    // Hash function to convert courseId to a consistent number
+    let hash = 0;
+    for (let i = 0; i < courseId.length; i++) {
+      hash = courseId.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    
+    // Define color sets - more vibrant for both light and dark mode
+    const colors = darkMode ? [
+      { bg: 'bg-blue-900/50', border: 'border-blue-700', text: 'text-blue-200' },
+      { bg: 'bg-indigo-900/50', border: 'border-indigo-700', text: 'text-indigo-200' },
+      { bg: 'bg-purple-900/50', border: 'border-purple-700', text: 'text-purple-200' },
+      { bg: 'bg-pink-900/50', border: 'border-pink-700', text: 'text-pink-200' },
+      { bg: 'bg-red-900/50', border: 'border-red-700', text: 'text-red-200' },
+      { bg: 'bg-orange-900/50', border: 'border-orange-700', text: 'text-orange-200' },
+      { bg: 'bg-amber-900/50', border: 'border-amber-700', text: 'text-amber-200' },
+      { bg: 'bg-yellow-900/50', border: 'border-yellow-700', text: 'text-yellow-200' },
+      { bg: 'bg-lime-900/50', border: 'border-lime-700', text: 'text-lime-200' },
+      { bg: 'bg-green-900/50', border: 'border-green-700', text: 'text-green-200' },
+      { bg: 'bg-emerald-900/50', border: 'border-emerald-700', text: 'text-emerald-200' },
+      { bg: 'bg-teal-900/50', border: 'border-teal-700', text: 'text-teal-200' },
+      { bg: 'bg-cyan-900/50', border: 'border-cyan-700', text: 'text-cyan-200' },
+    ] : [
+      { bg: 'bg-blue-200', border: 'border-blue-400', text: 'text-blue-900' },
+      { bg: 'bg-indigo-200', border: 'border-indigo-400', text: 'text-indigo-900' },
+      { bg: 'bg-purple-200', border: 'border-purple-400', text: 'text-purple-900' },
+      { bg: 'bg-pink-200', border: 'border-pink-400', text: 'text-pink-900' },
+      { bg: 'bg-red-200', border: 'border-red-400', text: 'text-red-900' },
+      { bg: 'bg-orange-200', border: 'border-orange-400', text: 'text-orange-900' },
+      { bg: 'bg-amber-200', border: 'border-amber-400', text: 'text-amber-900' },
+      { bg: 'bg-yellow-200', border: 'border-yellow-400', text: 'text-yellow-900' },
+      { bg: 'bg-lime-200', border: 'border-lime-400', text: 'text-lime-900' },
+      { bg: 'bg-green-200', border: 'border-green-400', text: 'text-green-900' },
+      { bg: 'bg-emerald-200', border: 'border-emerald-400', text: 'text-emerald-900' },
+      { bg: 'bg-teal-200', border: 'border-teal-400', text: 'text-teal-900' },
+      { bg: 'bg-cyan-200', border: 'border-cyan-400', text: 'text-cyan-900' },
+    ];
+    
+    // Use the hash to pick a color
+    const colorIndex = Math.abs(hash) % colors.length;
+    return colors[colorIndex];
+  };
   
   // Time slots
   const dayTimeSlots = Array.from({ length: 9 }, (_, i) => {
@@ -81,30 +139,107 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        // Fetch departments
-        const departmentsSnapshot = await getDocs(collection(db, 'departments'));
+        // Fetch faculties
+        const facultiesSnapshot = await getDocs(collection(db, 'faculties'));
+        const facultiesData = facultiesSnapshot.docs
+          .filter(doc => doc.data().isActive)
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+        setFaculties(facultiesData);
+        
+        // Fetch departments with faculty filtering
+        const departmentsRef = collection(db, 'departments');
+        let departmentsQuery;
+        
+        if (selectedFaculty !== 'all') {
+          departmentsQuery = query(departmentsRef, where("facultyId", "==", selectedFaculty), where("isActive", "==", true));
+        } else {
+          departmentsQuery = query(departmentsRef, where("isActive", "==", true));
+        }
+        
+        const departmentsSnapshot = await getDocs(departmentsQuery);
         const departmentsData = departmentsSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
         setDepartments(departmentsData);
         
-        // Fetch programs
-        const programsSnapshot = await getDocs(collection(db, 'programs'));
+        // Reset department selection if it's no longer valid with the selected faculty
+        if (selectedFaculty !== 'all' && selectedDepartment !== 'all' && selectedDepartment !== userDepartment) {
+          const deptExists = departmentsData.some(dept => dept.id === selectedDepartment);
+          if (!deptExists) {
+            setSelectedDepartment(userRole === 'hod' ? userDepartment : 'all');
+          }
+        }
+        
+        // Fetch programs with department filtering
+        const programsRef = collection(db, 'programs');
+        let programsQuery;
+        
+        if (userRole === 'hod') {
+          // For HoD, only their department's programs
+          const departmentRef = query(collection(db, 'departments'), where("name", "==", userDepartment));
+          const deptSnapshot = await getDocs(departmentRef);
+          if (!deptSnapshot.empty) {
+            const departmentId = deptSnapshot.docs[0].id;
+            programsQuery = query(programsRef, where("departmentId", "==", departmentId), where("isActive", "==", true));
+          }
+        } else if (selectedDepartment !== 'all') {
+          // Filter by selected department
+          programsQuery = query(programsRef, where("departmentId", "==", selectedDepartment), where("isActive", "==", true));
+        } else if (selectedFaculty !== 'all') {
+          // Filter by selected faculty (through departments)
+          const deptIds = departmentsData
+            .filter(dept => dept.facultyId === selectedFaculty)
+            .map(dept => dept.id);
+          
+          if (deptIds.length > 0) {
+            programsQuery = query(programsRef, where("departmentId", "in", deptIds), where("isActive", "==", true));
+          } else {
+            setProgramsList([]);
+            programsQuery = query(programsRef, where("isActive", "==", true));
+          }
+        } else {
+          // All active programs
+          programsQuery = query(programsRef, where("isActive", "==", true));
+        }
+        
+        const programsSnapshot = await getDocs(programsQuery);
         const programsData = programsSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
         setProgramsList(programsData);
         
+        // Reset program selection if it's no longer valid
+        if (selectedProgram !== 'all') {
+          const programExists = programsData.some(prog => prog.id === selectedProgram);
+          if (!programExists) {
+            setSelectedProgram('all');
+          }
+        }
+        
         // Fetch courses
         let coursesQuery = collection(db, 'courses');
         
-        // Filter by department and/or program if selected
-        if (userRole === 'admin' && selectedDepartment !== 'all') {
-          coursesQuery = query(coursesQuery, where('departmentName', '==', selectedDepartment));
-        } else if (userRole === 'hod') {
+        // Filter by role, faculty, department, or program as appropriate
+        if (userRole === 'hod') {
           coursesQuery = query(coursesQuery, where('departmentName', '==', userDepartment));
+        } else if (selectedProgram !== 'all') {
+          coursesQuery = query(coursesQuery, where('programId', '==', selectedProgram));
+        } else if (selectedDepartment !== 'all') {
+          coursesQuery = query(coursesQuery, where('departmentId', '==', selectedDepartment));
+        } else if (selectedFaculty !== 'all') {
+          // Get department IDs in this faculty
+          const deptIds = departmentsData
+            .filter(dept => dept.facultyId === selectedFaculty)
+            .map(dept => dept.id);
+          
+          if (deptIds.length > 0) {
+            coursesQuery = query(coursesQuery, where('departmentId', 'in', deptIds));
+          }
         }
         
         const coursesSnapshot = await getDocs(coursesQuery);
@@ -295,18 +430,25 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         );
         
         setCollisions(uniqueConflicts);
+        
+        // Add debug logs for data loaded
+        console.log('DEBUG - Faculties loaded:', facultiesData?.length);
+        console.log('DEBUG - Departments loaded:', departmentsData?.length);
+        console.log('DEBUG - Programs loaded:', programsData?.length);
+        console.log('DEBUG - Courses loaded:', coursesData?.length);
+        console.log('DEBUG - selectedFaculty:', selectedFaculty);
+        console.log('DEBUG - selectedDepartment:', selectedDepartment);
+        console.log('DEBUG - selectedProgram:', selectedProgram);
       } catch (error) {
-        console.error("Error fetching schedule data:", error);
-        preventDuplicateToast(() => {
+        console.error("Error fetching data:", error);
           toast.error("Failed to load schedule data");
-        });
       } finally {
         setIsLoading(false);
       }
     };
     
     fetchData();
-  }, [userRole, userDepartment, user?.uid, selectedDepartment, selectedProgram]);
+  }, [userRole, userDepartment, selectedDepartment, selectedFaculty, selectedProgram, user?.uid]);
   
   // Get time slots based on the selected program type
   const getTimeSlots = () => {
@@ -1749,33 +1891,41 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     return filteredEvents.map(event => ({
       id: event.id,
       title: event.title,
-      courseCode: event.courseCode,
-      lecturer: event.lecturer,
-      room: event.room,
+      courseId: event.courseId,
+      courseCode: event.courseCode || 'Unknown',
+      lecturer: event.lecturer || 'Not Assigned',
+      room: event.room || 'TBA',
       day: daysOfWeek[event.dayOfWeek - 1],
       startTime: event.startTime,
       endTime: event.endTime,
       isCrossCutting: event.isCrossCutting,
       department: event.department,
-      sessionType: event.sessionType,
+      sessionType: event.sessionType || 'LH',
       programType: event.programType
     }));
   };
 
   // Get event position on the timetable grid
   const getEventPosition = (event) => {
-    // This function calculates the position of events in the timetable grid
-    const startHour = parseInt(event.startTime.split(':')[0]);
-    const endHour = parseInt(event.endTime.split(':')[0]);
+    const startMins = convertTimeToMinutes(event.startTime);
+    const endMins = convertTimeToMinutes(event.endTime);
     
-    // Calculate offset based on program type
-    const baseHour = programType === 'day' ? 8 : 17; // 8am for day, 5pm for evening
-    const startOffset = startHour - baseHour;
-    const duration = endHour - startHour;
+    // Get first and last time slot for calculating total day height
+    const timeSlots = getTimeSlots();
+    const firstSlotTime = convertTimeToMinutes(timeSlots[0]);
+    const lastSlotTime = convertTimeToMinutes(timeSlots[timeSlots.length - 1]) + 60; // Add one hour for the last slot
+    
+    // Calculate total day height (in minutes)
+    const dayHeightInMinutes = lastSlotTime - firstSlotTime;
+    const dayHeightInPixels = timeSlots.length * 80; // Each time slot is 80px tall
+    
+    // Calculate position and height relative to first time slot
+    const top = ((startMins - firstSlotTime) / dayHeightInMinutes) * dayHeightInPixels;
+    const height = ((endMins - startMins) / dayHeightInMinutes) * dayHeightInPixels;
     
     return {
-      gridRowStart: startOffset + 2, // +2 because of header rows
-      gridRowEnd: `span ${duration}`
+      top: `${Math.max(top, 0)}px`,
+      height: `${Math.max(height, 20)}px` // Minimum height of 20px
     };
   };
 
@@ -1786,57 +1936,32 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
       case 'LH':
         return {
           label: 'Lecture',
-          class: darkMode ? 'bg-blue-900/30 text-blue-300 border border-blue-800/30' : 'bg-blue-100 text-blue-800 border border-blue-200'
+          class: darkMode ? 'bg-blue-900/20 text-blue-300' : 'bg-blue-100 text-blue-700',
+          bgFull: darkMode ? 'bg-blue-600' : 'bg-blue-500',
+          textFull: 'text-white'
         };
       case 'PH':
         return {
           label: 'Practical',
-          class: darkMode ? 'bg-green-900/30 text-green-300 border border-green-800/30' : 'bg-green-100 text-green-800 border border-green-200'
+          class: darkMode ? 'bg-green-900/20 text-green-300' : 'bg-green-100 text-green-700',
+          bgFull: darkMode ? 'bg-green-600' : 'bg-green-500',
+          textFull: 'text-white'
         };
       case 'TH':
         return {
           label: 'Tutorial',
-          class: darkMode ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-800/30' : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-        };
-      case 'CH':
-        return {
-          label: 'Clinical',
-          class: darkMode ? 'bg-red-900/30 text-red-300 border border-red-800/30' : 'bg-red-100 text-red-800 border border-red-200'
+          class: darkMode ? 'bg-amber-900/20 text-amber-300' : 'bg-amber-100 text-amber-700',
+          bgFull: darkMode ? 'bg-amber-500' : 'bg-amber-500',
+          textFull: 'text-white'
         };
       default:
         return {
-          label: 'Unknown',
-          class: darkMode ? 'bg-gray-900/30 text-gray-300 border border-gray-800/30' : 'bg-gray-100 text-gray-800 border border-gray-200'
+          label: 'Other',
+          class: darkMode ? 'bg-gray-900/20 text-gray-300' : 'bg-gray-100 text-gray-700',
+          bgFull: darkMode ? 'bg-gray-600' : 'bg-gray-500',
+          textFull: 'text-white'
         };
     }
-  };
-
-  // Handle click on a time slot
-  const handleSlotClick = (day, time) => {
-    setCurrentEvent(prev => ({
-      ...prev,
-      dayOfWeek: daysOfWeek.indexOf(day) + 1,
-      startTime: time,
-      endTime: getEndTime(time),
-      programType
-    }));
-    setShowAddEventModal(true);
-  };
-
-  // Calculate end time based on start time
-  const getEndTime = (startTime) => {
-    if (!startTime) return '';
-    
-    const [hours, minutes] = startTime.split(':').map(Number);
-    let newHours = hours;
-    let newMinutes = minutes + 50; // Default to 50 minute sessions
-    
-    if (newMinutes >= 60) {
-      newHours += Math.floor(newMinutes / 60);
-      newMinutes = newMinutes % 60;
-    }
-    
-    return `${String(newHours).padStart(2, '0')}:${String(newMinutes).padStart(2, '0')}`;
   };
 
   // Render the timetable view
@@ -1858,175 +1983,428 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     }
   };
 
+  // Calculate events that occur at the same time
+  const groupOverlappingEvents = (events, day) => {
+    // Filter events for the specific day
+    const dayEvents = events.filter(event => event.day === day);
+    
+    // Sort events by start time
+    dayEvents.sort((a, b) => convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime));
+    
+    // Group events that overlap
+    const timeGroups = [];
+    
+    for (const event of dayEvents) {
+      const startTime = convertTimeToMinutes(event.startTime);
+      const endTime = convertTimeToMinutes(event.endTime);
+      
+      // Find group that overlaps with this event
+      let foundGroup = false;
+      
+      for (const group of timeGroups) {
+        // Check if this event overlaps with any event in the group
+        const overlaps = group.some(groupEvent => {
+          const groupStartTime = convertTimeToMinutes(groupEvent.startTime);
+          const groupEndTime = convertTimeToMinutes(groupEvent.endTime);
+          
+          return (startTime < groupEndTime && groupStartTime < endTime);
+        });
+        
+        if (overlaps) {
+          group.push({ ...event });
+          foundGroup = true;
+          break;
+        }
+      }
+      
+      // If no overlapping group was found, create a new group
+      if (!foundGroup) {
+        timeGroups.push([{ ...event }]);
+      }
+    }
+    
+    // Return the grouped events with positioning information
+    return timeGroups.map(group => {
+      return group.map((event, index) => {
+        return {
+          ...event,
+          width: `${100 / group.length}%`,
+          left: `${(index * 100) / group.length}%`,
+          zIndex: index + 1,
+          totalInGroup: group.length
+        };
+      });
+    }).flat();
+  };
+
   // Render day view (single day with hourly slots)
   const renderDayView = (events) => {
-    // Get time slots based on program type
-    const hours = getTimeSlots();
-    
     // Get the day of the week for the current date
-    const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][currentDate.getDay()];
+    const dayOfWeek = daysOfWeek[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
     
-    // Filter events for the selected day
-    const dayEvents = events.filter(event => event.day === dayOfWeek);
+    // Get events for this day with overlapping info
+    const dayEventsWithPosition = groupOverlappingEvents(events, dayOfWeek);
+    
+    // Current time indicator
+    const now = new Date();
+    const isToday = now.toDateString() === currentDate.toDateString();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimePosition = (currentHour * 60 + currentMinute) / 1440 * 100; // Position as percentage
 
     return (
-      <div className="overflow-x-auto">
-        <div className={`min-w-[800px] border rounded-lg ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-          {/* Day header */}
-          <div className="grid grid-cols-2 divide-x divide-y">
-            <div className={`p-3 ${darkMode ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-              Time
-            </div>
-            <div 
-              className={`p-3 text-center font-medium ${darkMode ? 'bg-gray-800 text-gray-300 border-gray-700' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
-            >
-              {dayOfWeek}
+      <div className={`rounded-lg overflow-hidden border shadow-sm ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+        <div className={`py-3 px-4 font-medium ${
+          darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
+        } border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">
+              {currentDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </h2>
+            <div className="flex gap-1">
+              <button 
+                onClick={() => setCurrentView('week')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Week
+              </button>
+              <button 
+                onClick={() => setCurrentView('month')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Month
+              </button>
             </div>
           </div>
-
-          {/* Time slots */}
-          {hours.map(hour => (
-            <div key={hour} className="grid grid-cols-2 divide-x divide-y">
-              <div className={`p-2 text-center ${darkMode ? 'bg-gray-800/50 text-gray-400 border-gray-700' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                {hour}
-              </div>
+        </div>
+        
+        <div className="grid grid-cols-[60px_1fr] relative">
+          {/* Time indicators */}
+          <div className={`${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+            {getTimeSlots().map((time) => (
               <div 
-                className={`p-2 relative h-16 ${
-                  darkMode ? 'hover:bg-gray-800 border-gray-700' : 'hover:bg-gray-50 border-gray-200'
+                key={time} 
+                className={`h-20 text-xs font-medium flex items-center justify-center border-b ${
+                  darkMode ? 'border-gray-700' : 'border-gray-200'
                 }`}
-                onClick={() => handleSlotClick(dayOfWeek, hour)}
               >
-                {dayEvents
-                  .filter(event => event.startTime.split(':')[0] === hour.split(':')[0])
-                  .map(event => {
-                    const sessionType = getSessionTypeBadge(event.sessionType);
+                <span>{time}</span>
+            </div>
+            ))}
+          </div>
+
+          {/* Events container */}
+          <div className={`relative bg-white ${darkMode ? 'bg-gray-900' : ''}`}>
+            {/* Hour grid lines */}
+            {getTimeSlots().map((time) => (
+              <div 
+                key={`grid-${time}`}
+                className={`absolute w-full h-20 border-b ${
+                  darkMode ? 'border-gray-700/50' : 'border-gray-200'
+                }`}
+                style={{ top: `${getTimeSlots().indexOf(time) * 80}px` }}
+              />
+            ))}
+            
+            {/* Current time indicator - only shown if today */}
+            {isToday && (
+              <div 
+                className="absolute w-full z-10 flex items-center"
+                style={{ top: `${currentTimePosition * 19.2}px` }} // 19.2 = 1440min / 24h * 80px per hour / 60min
+              >
+                <div className="w-2 h-2 rounded-full bg-red-500 -ml-1"></div>
+                <div className="flex-1 h-[1px] bg-red-500"></div>
+              </div>
+            )}
+            
+            {/* Events */}
+            {dayEventsWithPosition.map(event => {
+              const courseColor = getCourseColor(event.courseId);
+              
+              // Calculate position based on time
+              const position = getEventPosition(event);
                     
                     return (
                       <div 
                         key={event.id}
-                        className={`absolute left-0 right-0 mx-1 p-2 rounded-md text-xs ${sessionType.class}`}
-                        style={getEventPosition(event)}
-                      >
-                        <div className="font-medium truncate flex items-center justify-between">
-                          <span>{event.title}</span>
-                          <span className="ml-1 text-xs px-1 py-0.5 rounded-sm bg-opacity-50">
-                            {sessionType.label}
+                  className={`absolute p-2 rounded-md text-xs border-l-4 shadow-sm hover:shadow-md transition-shadow ${courseColor.bg} ${courseColor.border} ${courseColor.text}`}
+                  style={{
+                    ...position,
+                    width: event.width || 'calc(100% - 8px)',
+                    left: event.left || '4px',
+                    zIndex: event.zIndex || 1
+                  }}
+                  onClick={() => handleViewEvent(event)}
+                >
+                  <div className="font-medium truncate">
+                    <span className="text-sm font-bold">
+                      {event.courseCode}
+                    </span>
+                    <span className={`ml-2 text-xs px-1 py-0.5 rounded-sm ${darkMode ? 'bg-opacity-20' : 'bg-opacity-10'} font-medium`}>
+                            {getSessionTypeBadge(event.sessionType).label}
                           </span>
                         </div>
-                        <div className="flex justify-between mt-1">
-                          <span>{event.room}</span>
+                  <div className="mt-1 text-xs">
+                    <span className="font-medium">{event.room}</span>
+                  </div>
+                  <div className="mt-1 flex justify-between text-xs">
+                    <span className="italic truncate">{event.lecturer}</span>
                           <span>{event.startTime}-{event.endTime}</span>
                         </div>
-                        <div className="mt-1 flex justify-between">
-                          <span className="truncate">{event.lecturer}</span>
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDeleteEvent(event.id);
                             }}
-                            className={`text-xs px-1 ml-1 rounded hover:bg-opacity-70 ${
-                              darkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700'
+                    className={`absolute top-1 right-1 text-xs w-5 h-5 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 hover:bg-opacity-70 ${
+                      darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                             }`}
                           >
                             ×
                           </button>
-                        </div>
                       </div>
                     );
                   })}
               </div>
-            </div>
-          ))}
         </div>
       </div>
     );
   };
 
+  // Add this function right before renderWeekView
+  const getFormattedDateRange = () => {
+    // Get the first day of the week (Monday)
+    const firstDay = new Date(currentDate);
+    firstDay.setDate(firstDay.getDate() - firstDay.getDay() + 1);
+    
+    // Get the last day of the week (Sunday)
+    const lastDay = new Date(firstDay);
+    lastDay.setDate(lastDay.getDate() + 6);
+    
+    // Format the dates
+    const firstMonth = firstDay.toLocaleDateString('en-US', { month: 'short' });
+    const lastMonth = lastDay.toLocaleDateString('en-US', { month: 'short' });
+    
+    // If the week spans two months, show both
+    if (firstMonth === lastMonth) {
+      return `${firstMonth} ${firstDay.getDate()}-${lastDay.getDate()}, ${firstDay.getFullYear()}`;
+    } else {
+      return `${firstMonth} ${firstDay.getDate()} - ${lastMonth} ${lastDay.getDate()}, ${lastDay.getFullYear()}`;
+    }
+  };
+
   // Render week view (days of the week with hourly slots)
   const renderWeekView = (events) => {
-    // Get time slots based on program type
-    const hours = getTimeSlots();
+    const timeSlots = getTimeSlots();
+    
+    // Get the days in the current week
+    const weekDays = [];
+    const weekStart = new Date(currentDate);
+    // Adjust to start of week (Monday)
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + (weekStart.getDay() === 0 ? -6 : 1));
+    
+    // Current time indicator
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimePosition = (currentHour * 60 + currentMinute) / 1440 * 100; // Position as percentage
+    // Generate the days of the week
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + i);
+      weekDays.push({
+        date: day,
+        dayOfWeek: daysOfWeek[i],
+        isToday: day.toDateString() === now.toDateString()
+      });
+    }
 
     return (
-      <div className="overflow-x-auto">
-        <div className={`min-w-[800px] border rounded-lg ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-          {/* Days of the week header */}
-          <div className="grid grid-cols-7 divide-x divide-y">
-            <div className={`p-3 ${darkMode ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-              Time
-            </div>
-            {daysOfWeek.map(day => (
-              <div 
-                key={day} 
-                className={`p-3 text-center font-medium ${darkMode ? 'bg-gray-800 text-gray-300 border-gray-700' : 'bg-gray-100 text-gray-700 border-gray-200'}`}
+      <div className={`rounded-lg overflow-hidden border shadow-sm ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+        <div className={`px-4 py-3 ${
+          darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
+        } border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">
+              {getFormattedDateRange()}
+            </h2>
+            <div className="flex gap-1">
+              <button 
+                onClick={() => setCurrentView('day')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
               >
-                {day}
+                Day
+              </button>
+              <button 
+                onClick={() => setCurrentView('month')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Month
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        {/* Days of week header */}
+        <div className={`grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] ${
+          darkMode ? 'bg-gray-800 text-white border-gray-700' : 'bg-white text-gray-800 border-gray-200'
+        } border-b`}>
+          <div className={`p-2 text-center text-xs font-medium ${
+            darkMode ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            GMT+03
+          </div>
+          
+          {weekDays.map((day) => (
+            <div 
+              key={day.dayOfWeek} 
+              className={`p-2 text-center border-l ${
+                day.isToday 
+                  ? (darkMode ? 'bg-blue-900/10 border-blue-800' : 'bg-blue-50 border-blue-100') 
+                  : (darkMode ? 'border-gray-700' : 'border-gray-200')
+              }`}
+              onClick={() => {
+                setCurrentDate(day.date);
+                setCurrentView('day');
+              }}
+            >
+              <div className={`text-sm font-medium ${
+                day.isToday 
+                  ? (darkMode ? 'text-blue-400' : 'text-blue-600') 
+                  : (darkMode ? 'text-white' : 'text-gray-800')
+              }`}>
+                {day.dayOfWeek}
+              </div>
+              <div className={`flex flex-col items-center ${
+                day.isToday 
+                  ? (darkMode ? 'text-blue-400' : 'text-blue-600') 
+                  : (darkMode ? 'text-gray-400' : 'text-gray-500')
+              }`}>
+                <div className={`text-lg font-semibold p-1 w-9 h-9 flex items-center justify-center ${
+                  day.isToday ? 'rounded-full bg-blue-600 text-white' : ''
+                }`}>
+                  {day.date.getDate()}
+                </div>
+                <div className="text-xs">
+                  {day.date.toLocaleDateString('en-US', { month: 'short' })}
+                </div>
+              </div>
               </div>
             ))}
           </div>
 
+        {/* Main grid */}
+        <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] relative">
           {/* Time slots */}
-          {hours.map(hour => (
-            <div key={hour} className="grid grid-cols-7 divide-x divide-y">
-              <div className={`p-2 text-center ${darkMode ? 'bg-gray-800/50 text-gray-400 border-gray-700' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                {hour}
+          <div className={`${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+            {timeSlots.map((time) => (
+              <div 
+                key={time} 
+                className={`h-20 text-xs font-medium flex items-center justify-center border-b ${
+                  darkMode ? 'border-gray-700' : 'border-gray-200'
+                }`}
+              >
+                <span>{time}</span>
               </div>
-              {daysOfWeek.map(day => {
-                // Find events for this day and time slot
-                const eventsForSlot = events.filter(
-                  event => event.day === day && 
-                  event.startTime.split(':')[0] === hour.split(':')[0]
-                );
+            ))}
+          </div>
+          
+          {/* Day columns */}
+          {weekDays.map((day, dayIndex) => {
+            // Group events that happen on this day and calculate positioning
+            const dayEventsWithPosition = groupOverlappingEvents(events, day.dayOfWeek);
 
                 return (
                   <div 
-                    key={`${day}-${hour}`} 
-                    className={`p-2 relative h-16 ${
-                      darkMode ? 'hover:bg-gray-800 border-gray-700' : 'hover:bg-gray-50 border-gray-200'
+                key={day.dayOfWeek} 
+                className={`relative border-l ${
+                  day.isToday
+                    ? (darkMode ? 'bg-gray-900/30 border-blue-800' : 'bg-blue-50/30 border-blue-100')
+                    : (darkMode ? 'border-gray-700 bg-gray-900' : 'border-gray-200 bg-white')
+                } ${dayIndex < 6 ? (darkMode ? 'border-r border-gray-700' : 'border-r border-gray-200') : ''}`}
+              >
+                {/* Hour grid lines */}
+                {timeSlots.map((time) => (
+                  <div 
+                    key={`grid-${day.dayOfWeek}-${time}`}
+                    className={`absolute w-full h-20 border-b ${
+                      darkMode ? 'border-gray-700/50' : 'border-gray-200'
                     }`}
-                    onClick={() => handleSlotClick(day, hour)}
+                    style={{ top: `${timeSlots.indexOf(time) * 80}px` }}
+                  />
+                ))}
+                
+                {/* Current time indicator - only shown if today */}
+                {day.isToday && (
+                  <div 
+                    className="absolute w-full z-10 flex items-center"
+                    style={{ top: `${currentTimePosition * 19.2}px` }} // 19.2 = 1440min / 24h * 80px per hour / 60min
                   >
-                    {eventsForSlot.map(event => {
-                      const sessionType = getSessionTypeBadge(event.sessionType);
+                    <div className="w-2 h-2 rounded-full bg-red-500 -ml-1"></div>
+                    <div className="flex-1 h-[1px] bg-red-500"></div>
+                  </div>
+                )}
+                
+                {/* Events */}
+                {dayEventsWithPosition.map(event => {
+                  const courseColor = getCourseColor(event.courseId);
+                  const sessionType = getSessionTypeBadge(event.sessionType);
+                  
+                  // Calculate position
+                  const position = getEventPosition(event);
                       
                       return (
                         <div 
                           key={event.id}
-                          className={`absolute left-0 right-0 mx-1 p-2 rounded-md text-xs ${sessionType.class}`}
-                          style={getEventPosition(event)}
-                        >
-                          <div className="font-medium truncate flex items-center justify-between">
-                            <span>{event.title}</span>
-                            <span className="ml-1 text-xs px-1 py-0.5 rounded-sm bg-opacity-50">
-                              {sessionType.label}
-                            </span>
-                          </div>
-                          <div className="flex justify-between mt-1">
-                            <span>{event.room}</span>
-                            <span>{event.startTime}-{event.endTime}</span>
-                          </div>
-                          <div className="mt-1 flex justify-between">
-                            <span className="truncate">{event.lecturer}</span>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteEvent(event.id);
-                              }}
-                              className={`text-xs px-1 ml-1 rounded hover:bg-opacity-70 ${
-                                darkMode ? 'bg-red-900/30 text-red-300' : 'bg-red-100 text-red-700'
+                      className={`absolute p-2 rounded-md text-xs border-l-4 shadow-sm hover:shadow-md transition-shadow ${courseColor.bg} ${courseColor.border} ${courseColor.text}`}
+                      style={{
+                        ...position,
+                        width: event.width || 'calc(100% - 8px)',
+                        left: event.left || '4px',
+                        zIndex: event.zIndex || 1
+                      }}
+                      onClick={() => handleViewEvent(event)}
+                    >
+                      <div className="font-medium truncate">
+                        <span className="text-sm font-bold">
+                          {event.courseCode || event.title}
+                        </span>
+                        <span className={`ml-2 text-xs px-1 py-0.5 rounded-sm ${sessionType.class}`}>
+                          {sessionType.label}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs">
+                        <span className="font-medium">{event.room}</span>
+                      </div>
+                      <div className="mt-1 flex justify-between text-xs">
+                        <span className="italic truncate">{event.lecturer}</span>
+                        <span>{event.startTime}-{event.endTime}</span>
+                      </div>
+                      <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEvent(event.id);
+                            }}
+                        className={`absolute top-1 right-1 text-xs w-5 h-5 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 hover:bg-opacity-70 ${
+                          darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                               }`}
                             >
                               ×
                             </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                      </div>
+                    );
+                  })}
                   </div>
                 );
               })}
-            </div>
-          ))}
         </div>
       </div>
     );
@@ -2053,29 +2431,62 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     });
     
     // Days of week header for month view
-    const calendarDaysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const calendarDaysOfWeek = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+    // Today's date for highlighting
+    const today = new Date();
+    const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
+    const todayDate = today.getDate();
 
     return (
-      <div className={`border rounded-lg ${darkMode ? 'border-gray-700 text-white' : 'border-gray-200 text-gray-800'}`}>
+      <div className={`rounded-lg overflow-hidden border shadow-sm ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+        <div className={`px-4 py-3 ${
+          darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
+        } border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">
+              {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </h2>
+            <div className="flex gap-1">
+              <button 
+                onClick={() => setCurrentView('day')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Day
+              </button>
+              <button 
+                onClick={() => setCurrentView('week')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Week
+              </button>
+            </div>
+          </div>
+        </div>
+        
         {/* Days of week header */}
-        <div className="grid grid-cols-7 divide-x divide-y">
+        <div className={`grid grid-cols-7 ${
+          darkMode ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-white text-gray-500 border-gray-200'
+        } border-b`}>
           {calendarDaysOfWeek.map(day => (
-            <div key={day} className={`p-2 text-center font-medium ${
-              darkMode ? 'bg-gray-800 text-gray-300 border-gray-700' : 'bg-gray-100 text-gray-700 border-gray-200'
-            }`}>
+            <div key={day} className="p-2 text-center text-xs font-medium">
               {day}
             </div>
           ))}
         </div>
         
         {/* Calendar grid */}
-        <div className="grid grid-cols-7 divide-x divide-y">
+        <div className="grid grid-cols-7">
           {days.map((day, index) => {
             if (day === null) {
               return (
-                <div key={`empty-${index}`} className={`p-2 h-28 ${
-                  darkMode ? 'bg-gray-800/50 text-gray-600 border-gray-700' : 'bg-gray-50/50 text-gray-400 border-gray-200'
-                }`}></div>
+                <div key={`empty-${index}`} className={`min-h-[100px] ${
+                  darkMode ? 'bg-gray-900/50 text-gray-600' : 'bg-gray-50/50 text-gray-400'
+                } border-b border-r ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}></div>
               );
             }
             
@@ -2096,53 +2507,66 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
               return event.day === dayOfWeek;
             });
             
-            const isToday = new Date().toDateString() === date.toDateString();
+            // Check if today
+            const isToday = isCurrentMonth && day === todayDate;
             
             return (
               <div 
                 key={`day-${day}`} 
-                className={`p-2 h-28 overflow-y-auto relative ${
+                className={`min-h-[100px] p-1 ${
                   isToday 
-                    ? (darkMode ? 'bg-blue-900/20 border-blue-700' : 'bg-blue-50 border-blue-200') 
-                    : (darkMode ? 'border-gray-700 hover:bg-gray-800' : 'border-gray-200 hover:bg-gray-50')
-                }`}
+                    ? (darkMode ? 'bg-blue-900/10 border-blue-800' : 'bg-blue-50 border-blue-100') 
+                    : (darkMode ? 'bg-gray-900 hover:bg-gray-800' : 'bg-white hover:bg-gray-50')
+                } border-r border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'} transition-colors`}
                 onClick={() => {
                   const newDate = new Date(year, month, day);
                   setCurrentDate(newDate);
                   setCurrentView('day');
                 }}
               >
-                <div className={`text-sm mb-1 font-medium ${
+                <div className={`flex items-center justify-between mb-1`}>
+                  <div className={`text-sm font-medium ${
                   isToday 
-                    ? (darkMode ? 'text-blue-300' : 'text-blue-700') 
+                      ? (darkMode ? 'text-blue-400' : 'text-blue-600') 
                     : (darkMode ? 'text-gray-300' : 'text-gray-700')
                 }`}>
                   {day}
+                  </div>
+                  {/* Optional: Add small month indicator for first/last day */}
+                  {day === 1 && (
+                    <div className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                      {currentDate.toLocaleDateString('en-US', { month: 'short' })}
+                    </div>
+                  )}
                 </div>
                 
-                {dayEvents.length > 0 && (
-                  <div className="space-y-1">
+                {/* Events list - limited to prevent overflow */}
+                <div className="space-y-1 overflow-hidden max-h-[80px]">
                     {dayEvents.slice(0, 3).map((event, eventIndex) => {
                       const sessionType = getSessionTypeBadge(event.sessionType);
+                      const courseColor = getCourseColor(event.courseId);
                       
                       return (
                         <div 
                           key={`${event.id}-${eventIndex}`}
-                          className={`text-xs px-1 py-0.5 rounded truncate ${sessionType.class}`}
-                          title={`${event.title} (${event.startTime}-${event.endTime})`}
+                          className={`text-xs px-1.5 py-0.5 rounded-sm truncate border-l-2 ${courseColor.bg} ${courseColor.text} ${courseColor.border}`}
+                          title={`${event.title} (${event.courseCode || ''}) - ${event.startTime}-${event.endTime} - ${sessionType.label}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleViewEvent(event);
+                          }}
                         >
-                          {event.startTime.substring(0, 5)} {event.title.substring(0, 12)}{event.title.length > 12 ? '...' : ''}
+                          <span className="font-medium">{event.startTime}</span> {event.courseCode || event.title}
                         </div>
                       );
                     })}
                     
                     {dayEvents.length > 3 && (
-                      <div className={`text-xs text-center py-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                    <div className={`text-xs text-center py-0.5 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                         +{dayEvents.length - 3} more
                       </div>
                     )}
                   </div>
-                )}
               </div>
             );
           })}
@@ -2169,173 +2593,96 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
       currentMonth.setMonth(currentMonth.getMonth() + 1);
     }
     
-    return (
-      <div className={`border rounded-lg ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-        <div className={`p-3 font-medium text-center ${
-          darkMode ? 'bg-gray-800 text-white border-gray-700' : 'bg-gray-100 text-gray-800 border-gray-200'
-        }`}>
-          Semester Overview: {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
-        </div>
-        
-        <div className="divide-y">
-          {months.map((month, monthIndex) => {
-            const monthEnd = new Date(month.date);
-            monthEnd.setMonth(monthEnd.getMonth() + 1);
-            monthEnd.setDate(0); // Last day of the month
-            
-            // Is current month?
-            const isCurrentMonth = 
-              currentDate.getMonth() === month.date.getMonth() && 
-              currentDate.getFullYear() === month.date.getFullYear();
+    // Group events by day
+    const eventsByDay = {};
+    
+    daysOfWeek.forEach(day => {
+      eventsByDay[day] = events.filter(event => event.day === day)
+        .sort((a, b) => convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime));
+    });
               
             return (
-              <div key={`month-${monthIndex}`} className={`p-4 ${
-                isCurrentMonth 
-                  ? (darkMode ? 'bg-blue-900/10' : 'bg-blue-50/50') 
-                  : ''
-              }`}>
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className={`font-medium text-lg ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                    {month.name}
-                  </h3>
+      <div className={`rounded-lg overflow-hidden border shadow-sm ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+        <div className={`px-4 py-3 ${
+          darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800'
+        } border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">
+              Semester Overview: {startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </h2>
+            <div className="flex gap-1">
                   <button 
-                    onClick={() => {
-                      setCurrentDate(new Date(month.date));
-                      setCurrentView('month');
-                    }}
-                    className={`text-xs px-2 py-1 rounded ${
-                      darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
-                    }`}
-                  >
-                    View Month
+                onClick={() => setCurrentView('day')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Day
                   </button>
-                </div>
-                
-                {/* Calendar mini-grid */}
-                <div className="grid grid-cols-7 gap-1 mb-4">
-                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                    <div key={`dow-${i}`} className={`text-center text-xs font-medium p-1 ${
-                      darkMode ? 'text-gray-400' : 'text-gray-500'
-                    }`}>
-                      {d}
-                    </div>
-                  ))}
-                  
-                  {/* Generate month grid */}
-                  {(() => {
-                    const firstDay = new Date(month.date.getFullYear(), month.date.getMonth(), 1);
-                    const lastDay = new Date(month.date.getFullYear(), month.date.getMonth() + 1, 0);
-                    const daysInMonth = lastDay.getDate();
-                    const firstDayOfWeek = firstDay.getDay(); // 0 = Sunday
-                    
-                    // Create array for all days in month view
-                    const days = [];
-                    
-                    // Add empty cells for days before the 1st
-                    for (let i = 0; i < firstDayOfWeek; i++) {
-                      days.push(null);
-                    }
-                    
-                    // Add days of the month
-                    for (let i = 1; i <= daysInMonth; i++) {
-                      days.push(i);
-                    }
-                    
-                    return days.map((day, dayIndex) => {
-                      if (day === null) {
-                        return (
-                          <div key={`empty-${dayIndex}`} className={`p-1 text-center text-xs ${
-                            darkMode ? 'text-gray-700' : 'text-gray-300'
-                          }`}></div>
-                        );
-                      }
-                      
-                      // Check if this is today
-                      const date = new Date(month.date.getFullYear(), month.date.getMonth(), day);
-                      const isToday = new Date().toDateString() === date.toDateString();
-                      
-                      // Get day of week
-                      const dayOfWeek = daysOfWeek[date.getDay() === 0 ? 6 : date.getDay() - 1];
-                      
-                      // Check if this day has events
-                      const dayEvents = events.filter(event => {
-                        if (event.isRecurring && event.day === dayOfWeek) {
-                          return true;
-                        }
-                        
-                        // Handle non-recurring events here if needed
-                        return false;
-                      });
-                      
-                      const hasEvents = dayEvents.length > 0;
-                      
-                      return (
-                        <div 
-                          key={`day-${day}`} 
-                          className={`p-1 text-center text-xs cursor-pointer 
-                            ${isToday 
-                              ? (darkMode ? 'bg-blue-900/30 text-blue-300 rounded-full font-bold' : 'bg-blue-600 text-white rounded-full font-bold') 
-                              : (darkMode ? 'text-gray-300 hover:bg-gray-700 rounded' : 'text-gray-800 hover:bg-gray-100 rounded')
-                            }
-                            ${hasEvents 
-                              ? (darkMode ? 'ring-1 ring-blue-500/30' : 'ring-1 ring-blue-300') 
-                              : ''
-                            }
-                          `}
-                          onClick={() => {
-                            setCurrentDate(date);
-                            setCurrentView('day');
-                          }}
-                        >
-                          {day}
+              <button 
+                onClick={() => setCurrentView('week')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Week
+              </button>
+              <button 
+                onClick={() => setCurrentView('month')}
+                className={`px-2 py-1 text-xs rounded-md ${
+                  darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Month
+              </button>
                         </div>
-                      );
-                    });
-                  })()}
+          </div>
                 </div>
                 
-                {/* Course summary for the month */}
-                <div className="space-y-3">
+        <div className={`p-4 grid grid-cols-1 gap-6 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
                   {daysOfWeek.map(day => {
-                    const dayEvents = events.filter(event => event.day === day);
+            const dayEvents = eventsByDay[day];
                     
-                    if (dayEvents.length === 0) return null;
+            if (!dayEvents.length) return null;
                     
                     return (
-                      <div key={`${month.name}-${day}`} className={`p-3 rounded-lg ${
-                        darkMode ? 'bg-gray-700/50' : 'bg-gray-50'
-                      }`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <h4 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+              <div key={day} className={`rounded-lg p-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                <h3 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                             {day}
-                          </h4>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            darkMode ? 'bg-gray-600 text-gray-300' : 'bg-gray-200 text-gray-700'
-                          }`}>
-                            {dayEvents.length} {dayEvents.length === 1 ? 'class' : 'classes'}
-                          </span>
-                        </div>
-                        
-                        <div className="space-y-1.5">
+                </h3>
+                <div className="space-y-2">
                           {dayEvents.map(event => {
+                    const courseColor = getCourseColor(event.courseId);
                             const sessionType = getSessionTypeBadge(event.sessionType);
                             
                             return (
                               <div 
                                 key={event.id}
-                                className={`flex items-center justify-between text-xs p-1.5 rounded ${sessionType.class}`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium">{event.startTime.substring(0, 5)}</span>
-                                  <span>{event.title}</span>
+                        className={`p-3 rounded-md flex items-center gap-3 cursor-pointer ${
+                          darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-white hover:bg-gray-100'
+                        } border ${darkMode ? 'border-gray-600' : 'border-gray-200'} shadow-sm transition-colors`}
+                        onClick={() => handleViewEvent(event)}
+                      >
+                        <div className={`w-2 h-12 rounded-full ${courseColor.border}`}></div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <div className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                              {event.courseCode}: {event.title}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-opacity-70">{sessionType.label}</span>
-                                  <span>{event.room}</span>
+                            <div className={`text-xs px-2 py-0.5 rounded-full ${
+                              darkMode ? 'bg-gray-800' : 'bg-gray-100'
+                            } ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                              {event.startTime} - {event.endTime} <span className={`ml-1 px-1.5 py-0.5 rounded-sm text-xs font-medium ${sessionType.class}`}>{sessionType.label}</span>
                                 </div>
                               </div>
-                            );
-                          })}
+                          <div className="flex items-center justify-between mt-1">
+                            <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                              Room: {event.room}
+                            </span>
+                            <span className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                              {event.lecturer}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -2435,8 +2782,11 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
 
   // Convert time to minutes for comparison
   const convertTimeToMinutes = (timeString) => {
+    if (!timeString || typeof timeString !== 'string') return 0;
+    
+    // Handle various time formats: "09:00", "9:00"
     const [hours, minutes] = timeString.split(':').map(Number);
-    return hours * 60 + minutes;
+    return (hours || 0) * 60 + (minutes || 0);
   };
 
   // Check for scheduling conflicts
@@ -2829,6 +3179,127 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     setShowAddEventModal(false);
   };
 
+  // Add function to handle event click for details (this was missing)
+  const handleViewEvent = (event) => {
+    setSelectedEvent(event);
+    setShowEventDetailModal(true);
+  };
+
+  // Add a new component for the event detail modal
+  const EventDetailModal = () => {
+    if (!selectedEvent) return null;
+    
+    const sessionType = getSessionTypeBadge(selectedEvent.sessionType);
+    
+    return (
+      <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${darkMode ? 'bg-black/70' : 'bg-gray-800/50'}`}>
+        <div 
+          className={`relative w-full max-w-md rounded-lg shadow-xl ${
+            darkMode ? 'bg-gray-900 text-white' : 'bg-white text-gray-800'
+          }`}
+        >
+          {/* Header with color bar based on course type */}
+          <div className={`h-2 w-full rounded-t-lg ${sessionType.bgFull}`}></div>
+          
+          <div className="p-6">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${sessionType.bgFull} ${sessionType.textFull}`}>
+                    {sessionType.label}
+                  </span>
+                  {selectedEvent.isCrossCutting && (
+                    <span className={`px-2 py-1 text-xs rounded-full font-medium ${
+                      darkMode ? 'bg-purple-900/50 text-purple-300' : 'bg-purple-100 text-purple-800'
+                    }`}>
+                      Cross-Cutting
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-xl font-bold">{selectedEvent.courseCode}</h3>
+                <p className="text-lg font-medium">{selectedEvent.title}</p>
+              </div>
+              <button 
+                onClick={() => setShowEventDetailModal(false)}
+                className={`p-1 rounded-full ${
+                  darkMode ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-600'
+                }`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className={`grid grid-cols-2 gap-4 p-4 rounded-lg mb-4 ${
+              darkMode ? 'bg-gray-800' : 'bg-gray-50'
+            }`}>
+              <div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Day</div>
+                <div className="font-medium">{selectedEvent.day}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Time</div>
+                <div className="font-medium">{selectedEvent.startTime} - {selectedEvent.endTime}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Room</div>
+                <div className="font-medium">{selectedEvent.room}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Department</div>
+                <div className="font-medium">{selectedEvent.department}</div>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+              <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Lecturer</div>
+              <div className={`flex items-center gap-2 p-3 rounded-lg ${
+                darkMode ? 'bg-gray-800' : 'bg-gray-50'
+              }`}>
+                <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">
+                  {selectedEvent.lecturer.charAt(0)}
+                </div>
+                <div>
+                  <div className="font-medium">{selectedEvent.lecturer}</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    {selectedEvent.lecturerEmail || 'No email provided'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-between">
+              <button
+                onClick={() => {
+                  setShowEventDetailModal(false);
+                  handleDeleteEvent(selectedEvent.id);
+                }}
+                className={`px-4 py-2 rounded-md ${
+                  darkMode 
+                    ? 'bg-red-900/30 hover:bg-red-900/40 text-red-400 border border-red-800/30' 
+                    : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+                }`}
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setShowEventDetailModal(false)}
+                className={`px-4 py-2 rounded-md ${
+                  darkMode 
+                    ? 'bg-gray-700 hover:bg-gray-600 text-white' 
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-800'
+                }`}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Main render
   return (
     <div className="p-6">
@@ -2849,13 +3320,42 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
           {/* Department selector for admins */}
           {userRole === 'admin' && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Faculty dropdown */}
+              <div>
+                <label className={`text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Faculty:
+                </label>
+                <select
+                  value={selectedFaculty}
+                  onChange={(e) => {
+                    setSelectedFaculty(e.target.value);
+                    setSelectedDepartment('all');
+                    setSelectedProgram('all');
+                  }}
+                  className={`ml-2 p-1.5 rounded border text-sm ${
+                    darkMode 
+                      ? 'bg-gray-700 border-gray-600 text-white' 
+                      : 'bg-white border-gray-300 text-gray-800'
+                  }`}
+                >
+                  <option value="all">All Faculties</option>
+                  {faculties.map(faculty => (
+                    <option key={faculty.id} value={faculty.id}>{faculty.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Department dropdown */}
               <div>
                 <label className={`text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   Department:
                 </label>
                 <select
                   value={selectedDepartment}
-                  onChange={(e) => setSelectedDepartment(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedDepartment(e.target.value);
+                    setSelectedProgram('all');
+                  }}
                   className={`ml-2 p-1.5 rounded border text-sm ${
                     darkMode 
                       ? 'bg-gray-700 border-gray-600 text-white' 
@@ -2869,7 +3369,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                 </select>
               </div>
               
-              <div className="ml-2">
+              {/* Program dropdown */}
+              <div>
                 <label className={`text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                   Program:
                 </label>
@@ -3154,21 +3655,21 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div className="fixed inset-0 transition-opacity" onClick={resetAndCloseModal}>
-              <div className="absolute inset-0 bg-black opacity-50"></div>
+              <div className="absolute inset-0 bg-black opacity-60"></div>
             </div>
 
             <div className={`inline-block align-bottom rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full ${
-              darkMode ? 'bg-gray-800' : 'bg-white'
+              darkMode ? 'bg-gray-900 text-white' : 'bg-white text-gray-900'
             }`}>
               {/* Modal header */}
-              <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+              <div className={`px-6 py-4 border-b ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
                 <div className="flex items-center justify-between">
                   <h3 className={`text-lg font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                     Schedule Lecture
                   </h3>
                   <button 
                     onClick={resetAndCloseModal}
-                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-200'}`}
+                    className={`p-1 rounded-full ${darkMode ? 'hover:bg-gray-800 text-gray-400 hover:text-gray-300' : 'hover:bg-gray-200 text-gray-500 hover:text-gray-700'}`}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-6 w-6">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -3178,42 +3679,92 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
               </div>
               
               {/* Modal body */}
-              <div className="px-6 py-4">
+              <div className={`px-6 py-4 ${darkMode ? 'bg-gray-900' : 'bg-white'}`}>
                 <div className="space-y-4">
                   {/* Department and Program selectors for admin when scheduling */}
                   {userRole === 'admin' && (
                     <div className="grid grid-cols-2 gap-4">
+                      {/* Faculty dropdown */}
                       <div>
-                        <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Department</label>
+                        <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Faculty</label>
                         <select 
-                          value={selectedDepartment}
-                          onChange={(e) => setSelectedDepartment(e.target.value)}
+                          value={selectedFaculty}
+                          onChange={(e) => {
+                            setSelectedFaculty(e.target.value);
+                            setSelectedDepartment('all');
+                            setSelectedProgram('all');
+                          }}
                           className={`w-full p-2 rounded-md border ${
-                            darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                            darkMode 
+                              ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                              : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                           }`}
                         >
-                          {departments.map(dept => (
-                            <option key={dept.id} value={dept.name}>{dept.name}</option>
+                          <option value="all" className={darkMode ? 'bg-gray-800' : 'bg-white'}>All Faculties</option>
+                          {faculties.map(faculty => (
+                            <option key={faculty.id} value={faculty.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                              {faculty.name}
+                            </option>
                           ))}
                         </select>
                       </div>
                       
                       <div>
+                        <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Department</label>
+                        <select 
+                          value={selectedDepartment}
+                          onChange={(e) => {
+                            setSelectedDepartment(e.target.value);
+                            setSelectedProgram('all');
+                          }}
+                          className={`w-full p-2 rounded-md border ${
+                            darkMode 
+                              ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                              : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
+                          }`}
+                        >
+                          <option value="all" className={darkMode ? 'bg-gray-800' : 'bg-white'}>All Departments</option>
+                          {departments.map(dept => (
+                            <option key={dept.id} value={dept.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      
+                      <div className="col-span-2">
                         <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Program</label>
                         <select 
                           value={selectedProgram}
                           onChange={(e) => setSelectedProgram(e.target.value)}
                           className={`w-full p-2 rounded-md border ${
-                            darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                            darkMode 
+                              ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                              : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                           }`}
                         >
-                          <option value="all">All Programs</option>
+                          <option value="all" className={darkMode ? 'bg-gray-800' : 'bg-white'}>All Programs</option>
                           {programsList
-                            .filter(prog => selectedDepartment === 'all' || 
-                              prog.department === selectedDepartment || 
-                              prog.departmentName === selectedDepartment)
+                            .filter(prog => {
+                              // Check if department selection matches by ID or by department name
+                              const matches = selectedDepartment === 'all' || 
+                                prog.departmentId === selectedDepartment || 
+                                prog.department === selectedDepartment;
+                              
+                              console.log('DEBUG - Program filter:', {
+                                progName: prog.name,
+                                progDeptId: prog.departmentId,
+                                progDept: prog.department,
+                                selectedDept: selectedDepartment,
+                                matches: matches
+                              });
+                              
+                              return matches;
+                            })
                             .map(prog => (
-                              <option key={prog.id} value={prog.id}>{prog.name}</option>
+                              <option key={prog.id} value={prog.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                                {prog.name}
+                              </option>
                             ))}
                         </select>
                       </div>
@@ -3228,15 +3779,24 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                         value={selectedProgram}
                         onChange={(e) => setSelectedProgram(e.target.value)}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                          darkMode 
+                            ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                            : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                         }`}
                       >
-                        <option value="all">All Programs</option>
+                        <option value="all" className={darkMode ? 'bg-gray-800' : 'bg-white'}>All Programs</option>
                         {programsList
-                          .filter(prog => prog.department === userDepartment || 
-                             prog.departmentName === userDepartment)
+                          .filter(prog => {
+                            // Check by department ID or department name
+                            const hodDept = departments.find(d => d.name === userDepartment);
+                            return prog.departmentId === hodDept?.id || 
+                              prog.department === userDepartment || 
+                              prog.departmentName === userDepartment;
+                          })
                           .map(prog => (
-                            <option key={prog.id} value={prog.id}>{prog.name}</option>
+                            <option key={prog.id} value={prog.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                              {prog.name}
+                            </option>
                           ))}
                       </select>
                     </div>
@@ -3248,46 +3808,67 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       value={currentEvent.courseId}
                       onChange={(e) => handleFormChange('courseId', e.target.value)}
                       className={`w-full p-2 rounded-md border ${
-                        darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300 text-gray-800'
+                        darkMode 
+                          ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                          : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                       }`}
                     >
-                      <option value="">Select Course</option>
+                      <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Course</option>
                       {courses
                         .filter(course => {
-                          // Filter by department if selected
-                          const departmentMatch = 
-                            (userRole === 'admin' && selectedDepartment) 
-                              ? course.departmentName === selectedDepartment || 
-                                course.department === selectedDepartment || 
-                                course.isCrossCutting
-                              : true;
+                          // Department filter
+                          let departmentMatch = true;
+                          if (userRole === 'admin' && selectedDepartment !== 'all') {
+                            departmentMatch = course.departmentId === selectedDepartment || 
+                              course.isCrossCutting;
+                          } else if (userRole === 'hod') {
+                            // For HoD, only show courses from their department or cross-cutting
+                            const hodDept = departments.find(d => d.name === userDepartment);
+                            departmentMatch = course.departmentId === hodDept?.id || 
+                              course.departmentName === userDepartment || 
+                              course.isCrossCutting;
+                          }
                           
-                          // Filter by program if selected
-                          const programMatch = 
-                            selectedProgram !== 'all'
-                              ? course.programId === selectedProgram || 
-                                (course.isCrossCutting && course.crossCuttingPrograms?.includes(selectedProgram))
-                              : true;
+                          // Program filter
+                          let programMatch = true;
+                          if (selectedProgram !== 'all') {
+                            programMatch = course.programId === selectedProgram || 
+                              (course.isCrossCutting && Array.isArray(course.crossCuttingPrograms) && 
+                               course.crossCuttingPrograms.includes(selectedProgram));
+                          }
+                          
+                          console.log('DEBUG - Course filter:', {
+                            courseName: course.name,
+                            courseCode: course.code,
+                            courseDeptId: course.departmentId,
+                            courseDeptName: course.departmentName,
+                            courseProgramId: course.programId,
+                            isCrossCutting: course.isCrossCutting,
+                            crossCuttingPrograms: course.crossCuttingPrograms,
+                            selectedDept: selectedDepartment,
+                            selectedProgram: selectedProgram,
+                            departmentMatch: departmentMatch,
+                            programMatch: programMatch
+                          });
                           
                           return departmentMatch && programMatch;
                         })
                         .map(course => (
-                          <option key={course.id} value={course.id}>
+                          <option key={course.id} value={course.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
                             {course.code} - {course.name} {course.isCrossCutting ? '(Cross-Cutting)' : ''}
                           </option>
-                        ))
-                      }
+                        ))}
                     </select>
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium mb-1">Session Type</label>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Session Type</label>
                     <div className="grid grid-cols-2 gap-2">
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.sessionType === 'LH' 
-                            ? (darkMode ? 'bg-blue-900/30 border-blue-800 text-blue-300' : 'bg-blue-100 border-blue-200 text-blue-800') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-blue-900/40 border-blue-700 text-blue-300' : 'bg-blue-100 border-blue-200 text-blue-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('sessionType', 'LH')}
                       >
@@ -3296,8 +3877,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.sessionType === 'PH' 
-                            ? (darkMode ? 'bg-green-900/30 border-green-800 text-green-300' : 'bg-green-100 border-green-200 text-green-800') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-green-900/40 border-green-700 text-green-300' : 'bg-green-100 border-green-200 text-green-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('sessionType', 'PH')}
                       >
@@ -3306,8 +3887,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.sessionType === 'TH' 
-                            ? (darkMode ? 'bg-yellow-900/30 border-yellow-800 text-yellow-300' : 'bg-yellow-100 border-yellow-200 text-yellow-800') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-yellow-900/40 border-yellow-700 text-yellow-300' : 'bg-yellow-100 border-yellow-200 text-yellow-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('sessionType', 'TH')}
                       >
@@ -3316,8 +3897,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.sessionType === 'CH' 
-                            ? (darkMode ? 'bg-red-900/30 border-red-800 text-red-300' : 'bg-red-100 border-red-200 text-red-800') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-red-900/40 border-red-700 text-red-300' : 'bg-red-100 border-red-200 text-red-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('sessionType', 'CH')}
                       >
@@ -3328,98 +3909,106 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Date</label>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Date</label>
                       <input 
                         type="date"
                         value={currentEvent.eventDate}
                         onChange={(e) => handleFormChange('eventDate', e.target.value)}
-                        min={semesterDates.startDate}
-                        max={semesterDates.endDate}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'
+                          darkMode 
+                            ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                            : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                         }`}
+                        required
                       />
                       <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                        Must be within semester: {new Date(semesterDates.startDate).toLocaleDateString()} - {new Date(semesterDates.endDate).toLocaleDateString()}
+                        Must be within semester: {semesterDates.startDate} - {semesterDates.endDate}
                       </p>
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium mb-1">Day</label>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Day</label>
                       <select 
                         value={currentEvent.dayOfWeek}
                         onChange={(e) => handleFormChange('dayOfWeek', e.target.value)}
-                        disabled={currentEvent.eventDate !== ''}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'
-                        } ${currentEvent.eventDate !== '' ? 'opacity-75 cursor-not-allowed' : ''}`}
+                          darkMode 
+                            ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                            : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
+                        }`}
                       >
-                        <option value="">Select Day</option>
-                        {daysOfWeek.map((day, index) => (
-                          <option key={index} value={index + 1}>{day}</option>
-                        ))}
+                        <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Day</option>
+                        <option value="1" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Monday</option>
+                        <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Tuesday</option>
+                        <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Wednesday</option>
+                        <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Thursday</option>
+                        <option value="5" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Friday</option>
+                        <option value="6" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Saturday</option>
+                        <option value="7" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Sunday</option>
                       </select>
-                      {currentEvent.eventDate !== '' && (
-                        <p className={`text-xs mt-1 italic ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      <p className={`text-xs mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                           Auto-selected from date
                         </p>
-                      )}
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Room</label>
+                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Room</label>
                       <select 
                         value={currentEvent.roomId}
                         onChange={(e) => handleFormChange('roomId', e.target.value)}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'
+                        darkMode 
+                          ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                          : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                         }`}
                       >
-                        <option value="">Select Room</option>
+                      <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Room</option>
                         {rooms.map(room => (
-                          <option key={room.id} value={room.id}>
-                            {room.name} ({room.building})
+                        <option key={room.id} value={room.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                          {room.name} ({room.type}) - Capacity: {room.capacity}
                           </option>
                         ))}
                       </select>
-                    </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Start Time</label>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Start Time</label>
                       <select 
                         value={currentEvent.startTime}
-                        onChange={(e) => {
-                          const startTime = e.target.value;
-                          handleFormChange('startTime', startTime);
-                          handleFormChange('endTime', getEndTime(startTime));
-                        }}
+                        onChange={(e) => handleFormChange('startTime', e.target.value)}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'
+                          darkMode 
+                            ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                            : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                         }`}
                       >
-                        <option value="">Select Time</option>
-                        {getTimeSlots().map((time, index) => (
-                          <option key={index} value={time}>{time}</option>
+                        <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Time</option>
+                        {getTimeSlots().map(time => (
+                          <option key={time} value={time} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                            {time}
+                          </option>
                         ))}
                       </select>
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium mb-1">End Time</label>
+                      <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>End Time</label>
                       <select 
                         value={currentEvent.endTime}
                         onChange={(e) => handleFormChange('endTime', e.target.value)}
                         className={`w-full p-2 rounded-md border ${
-                          darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-300'
+                          darkMode 
+                            ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
+                            : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
                         }`}
                       >
-                        <option value="">Select Time</option>
-                        {getTimeSlots().map((time, index) => (
-                          <option key={index} value={time}>{time}</option>
+                        <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Time</option>
+                        {getTimeSlots().map(time => (
+                          <option key={time} value={time} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
+                            {time}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -3431,8 +4020,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.programType === 'day' 
-                            ? (darkMode ? 'bg-indigo-900/30 border-indigo-800 text-indigo-300' : 'bg-indigo-100 border-indigo-200 text-indigo-700') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-blue-900/40 border-blue-700 text-blue-300' : 'bg-blue-100 border-blue-200 text-blue-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('programType', 'day')}
                       >
@@ -3441,8 +4030,8 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       <div 
                         className={`p-2 rounded border text-center cursor-pointer ${
                           currentEvent.programType === 'evening' 
-                            ? (darkMode ? 'bg-purple-900/30 border-purple-800 text-purple-300' : 'bg-purple-100 border-purple-200 text-purple-700') 
-                            : (darkMode ? 'border-gray-700' : 'border-gray-300')
+                            ? (darkMode ? 'bg-purple-900/40 border-purple-700 text-purple-300' : 'bg-purple-100 border-purple-200 text-purple-800') 
+                            : (darkMode ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700' : 'border-gray-300 hover:bg-gray-100')
                         }`}
                         onClick={() => handleFormChange('programType', 'evening')}
                       >
@@ -3457,55 +4046,71 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       id="isRecurring"
                       checked={currentEvent.isRecurring}
                       onChange={(e) => handleFormChange('isRecurring', e.target.checked)}
-                      className="mr-2"
+                      className={`h-4 w-4 rounded ${
+                        darkMode 
+                          ? 'bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-600' 
+                          : 'border-gray-300 text-blue-600 focus:ring-blue-500'
+                      }`}
                     />
-                    <label htmlFor="isRecurring" className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                    <label htmlFor="isRecurring" className={`ml-2 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                       Recurring (weekly)
                     </label>
                   </div>
                   
-                  {currentEvent.eventDate && (
-                    <p className={`text-xs mt-1 ml-5 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                      {currentEvent.isRecurring 
-                        ? `This lecture will repeat every ${daysOfWeek[parseInt(currentEvent.dayOfWeek) - 1]} throughout the semester.`
-                        : `This is a one-time lecture on ${new Date(currentEvent.eventDate).toLocaleDateString()}.`}
+                  {currentEvent.isRecurring && currentEvent.dayOfWeek && (
+                    <p className={`text-sm py-2 px-3 rounded ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>
+                      This lecture will repeat every {
+                        currentEvent.dayOfWeek === '1' ? 'Monday' :
+                        currentEvent.dayOfWeek === '2' ? 'Tuesday' :
+                        currentEvent.dayOfWeek === '3' ? 'Wednesday' :
+                        currentEvent.dayOfWeek === '4' ? 'Thursday' :
+                        currentEvent.dayOfWeek === '5' ? 'Friday' :
+                        currentEvent.dayOfWeek === '6' ? 'Saturday' :
+                        'Sunday'
+                      } throughout the semester.
                     </p>
                   )}
                   
-                  {/* Schedule check information */}
-                  <div className={`p-3 mt-4 rounded-lg ${
-                    darkMode ? 'bg-blue-900/20 border border-blue-800/30' : 'bg-blue-50 border border-blue-100'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className={`h-5 w-5 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`} />
-                      <span className={`text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-                        Schedule Check
-                      </span>
+                  <div className={`p-3 rounded-md ${darkMode ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-100'}`}>
+                    <div className="flex">
+                      <div className={`flex-shrink-0 ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.75.75 0 00.736-.743 6.653 6.653 0 012.096-4.5.75.75 0 10-.993-1.124 8.146 8.146 0 00-2.592 5.5A2.25 2.25 0 016.75 12h.001a2.25 2.25 0 012.249-2.25h.75a.75.75 0 000-1.5h-.75a3.75 3.75 0 00-3.75 3.75c0 1.49.868 2.777 2.126 3.384a.75.75 0 10.624-1.368 2.25 2.25 0 01-1.229-1.125 2.247 2.247 0 012.229-1.892h.75a.75.75 0 000-1.5H9z" clipRule="evenodd" />
+                        </svg>
                     </div>
-                    <p className={`text-xs mt-1 ${darkMode ? 'text-blue-300' : 'text-blue-600'}`}>
-                      The system will automatically check for collisions with existing lectures for the same lecturer, room, or student groups.
-                    </p>
+                      <div className="ml-3">
+                        <h3 className={`text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-800'}`}>Schedule Check</h3>
+                        <div className={`mt-2 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                          <p>The system will automatically check for collisions with existing lectures for the same lecturer, room, or student groups.</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
               
               {/* Modal footer */}
-              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'} flex justify-end gap-2`}>
+              <div className={`px-6 py-4 border-t ${darkMode ? 'border-gray-800' : 'border-gray-200'}`}>
+                <div className="flex justify-end gap-2">
                 <button 
+                    type="button"
                   onClick={resetAndCloseModal}
-                  className={`px-4 py-2 rounded-md text-sm font-medium ${
-                    darkMode ? 'hover:bg-gray-700 text-gray-300' : 'hover:bg-gray-200 text-gray-700'
+                    className={`px-4 py-2 text-sm font-medium rounded-md ${
+                      darkMode 
+                        ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
                 >
                   Cancel
                 </button>
-                
                 <button 
+                    type="button"
                   onClick={handleAddEvent}
-                  className={`px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700`}
+                    className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700"
                 >
                   Schedule Lecture
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -3750,6 +4355,9 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
           </div>
         </div>
       )}
+      
+      {/* Event Detail Modal */}
+      {showEventDetailModal && <EventDetailModal />}
     </div>
   );
 };
@@ -3761,3 +4369,4 @@ EnhancedScheduleCalendar.propTypes = {
 };
 
 export default EnhancedScheduleCalendar;
+

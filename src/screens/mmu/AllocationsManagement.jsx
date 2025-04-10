@@ -1,24 +1,27 @@
 import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where
+    collection,
+    deleteDoc,
+    doc,
+    getDoc,
+    getDocs,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
+    where
 } from 'firebase/firestore';
 import {
-  BookOpen,
-  Edit,
-  Plus,
-  Search,
-  Trash2,
-  User
+    BookOpen,
+    Building,
+    Edit,
+    Filter,
+    Plus,
+    Search,
+    Trash2,
+    User,
+    XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useState } from 'react';
@@ -32,6 +35,12 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
   // State variables
   const [showAllocateModal, setShowAllocateModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState('all');
+  const [selectedFaculty, setSelectedFaculty] = useState('all');
+  const [selectedProgram, setSelectedProgram] = useState('all');
+  const [faculties, setFaculties] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [programs, setPrograms] = useState([]);
   const [currentAllocation, setCurrentAllocation] = useState({
     courseId: '',
     lecturerId: '',
@@ -60,6 +69,131 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
   const [courses, setCourses] = useState([]);
   const [allocations, setAllocations] = useState([]);
 
+  // Load faculties
+  useEffect(() => {
+    const fetchFaculties = async () => {
+      try {
+        const facultiesSnapshot = await getDocs(collection(db, 'faculties'));
+        const facultiesData = facultiesSnapshot.docs
+          .filter(doc => doc.data().isActive)
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+        setFaculties(facultiesData);
+      } catch (error) {
+        console.error("Error loading faculties:", error);
+        toast.error("Failed to load faculties");
+      }
+    };
+    
+    fetchFaculties();
+  }, []);
+
+  // Load departments, filtered by selected faculty if applicable
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      try {
+        const departmentsRef = collection(db, 'departments');
+        let q;
+        
+        if (selectedFaculty !== 'all') {
+          q = query(departmentsRef, where("facultyId", "==", selectedFaculty), where("isActive", "==", true));
+        } else {
+          q = query(departmentsRef, where("isActive", "==", true));
+        }
+        
+        const departmentsSnapshot = await getDocs(q);
+        const departmentsData = departmentsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setDepartments(departmentsData);
+        
+        // Reset department selection if current selection is no longer valid
+        if (selectedFaculty !== 'all' && selectedDepartment !== 'all') {
+          const deptExists = departmentsData.some(dept => dept.id === selectedDepartment);
+          if (!deptExists) {
+            setSelectedDepartment('all');
+          }
+        }
+      } catch (error) {
+        console.error("Error loading departments:", error);
+        toast.error("Failed to load departments");
+      }
+    };
+    
+    fetchDepartments();
+  }, [selectedFaculty]);
+
+  // Load programs based on filters
+  useEffect(() => {
+    const loadPrograms = async () => {
+      try {
+        setIsLoading(true);
+        const programsRef = collection(db, 'programs');
+        let q;
+        
+        if (userRole === 'hod') {
+          // For HoD, only show programs in their department
+          const departmentsRef = collection(db, 'departments');
+          const deptQuery = query(departmentsRef, where("name", "==", userDepartment), where("isActive", "==", true));
+          const deptSnapshot = await getDocs(deptQuery);
+          
+          if (!deptSnapshot.empty) {
+            const departmentId = deptSnapshot.docs[0].id;
+            q = query(programsRef, where("departmentId", "==", departmentId), where("isActive", "==", true), orderBy("name"));
+          } else {
+            setIsLoading(false);
+            return;
+          }
+        } else if (selectedDepartment !== 'all') {
+          // Filter by selected department
+          q = query(programsRef, where("departmentId", "==", selectedDepartment), where("isActive", "==", true), orderBy("name"));
+        } else if (selectedFaculty !== 'all') {
+          // Filter by faculty (get all departments in this faculty first)
+          const deptIds = departments
+            .filter(dept => dept.facultyId === selectedFaculty)
+            .map(dept => dept.id);
+          
+          if (deptIds.length > 0) {
+            q = query(programsRef, where("departmentId", "in", deptIds), where("isActive", "==", true), orderBy("name"));
+          } else {
+            setPrograms([]);
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // All programs
+          q = query(programsRef, where("isActive", "==", true), orderBy("name"));
+        }
+        
+        const snapshot = await getDocs(q);
+        const programData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setPrograms(programData);
+        
+        // Reset program selection if current selection is no longer valid
+        if (selectedProgram !== 'all') {
+          const programExists = programData.some(prog => prog.id === selectedProgram);
+          if (!programExists) {
+            setSelectedProgram('all');
+          }
+        }
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Error loading programs:", error);
+        toast.error("Failed to load programs");
+        setIsLoading(false);
+      }
+    };
+    
+    loadPrograms();
+  }, [userRole, userDepartment, selectedDepartment, selectedFaculty, departments]);
+
   // Load lecturers from Firestore
   useEffect(() => {
     const loadLecturers = async () => {
@@ -72,16 +206,45 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         if (userRole === 'hod') {
           q = query(
             usersRef, 
-            where("role", "==", "lecturer"), 
+            where("role", "in", ["lecturer", "hod"]), // Include HoDs as well
             where("department", "==", userDepartment),
             where("isActive", "==", true),
             orderBy("displayName")
           );
-        } else {
-          // For admin, show all active lecturers
+        } else if (selectedDepartment !== 'all') {
+          // Filter by selected department
           q = query(
             usersRef, 
-            where("role", "==", "lecturer"), 
+            where("role", "in", ["lecturer", "hod"]), // Include HoDs as well
+            where("department", "==", departments.find(d => d.id === selectedDepartment)?.name || ''),
+            where("isActive", "==", true),
+            orderBy("displayName")
+          );
+        } else if (selectedFaculty !== 'all') {
+          // Get department names in the selected faculty
+          const deptNames = departments
+            .filter(dept => dept.facultyId === selectedFaculty)
+            .map(dept => dept.name);
+          
+          if (deptNames.length > 0) {
+            q = query(
+              usersRef, 
+              where("role", "in", ["lecturer", "hod"]), // Include HoDs as well
+              where("department", "in", deptNames),
+              where("isActive", "==", true),
+              orderBy("displayName")
+            );
+          } else {
+            setAllLecturers([]);
+            setLecturers([]);
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // For admin, show all active lecturers and HoDs
+          q = query(
+            usersRef, 
+            where("role", "in", ["lecturer", "hod"]), // Include HoDs as well
             where("isActive", "==", true),
             orderBy("displayName")
           );
@@ -92,7 +255,8 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
           id: doc.id,
           ...doc.data(),
           name: doc.data().displayName || doc.data().name || 'Unknown', // Ensure we have a name to display
-          courseLoad: 0 // Will be updated after loading allocations
+          courseLoad: 0, // Will be updated after loading allocations
+          role: doc.data().role // Include role for display
         }));
         setAllLecturers(lecturerData); // Store all lecturers
         setLecturers(lecturerData);     // Initial display of all lecturers
@@ -105,7 +269,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     };
     
     loadLecturers();
-  }, [userRole, userDepartment]);
+  }, [userRole, userDepartment, selectedDepartment, selectedFaculty, departments]);
   
   // Load courses from Firestore
   useEffect(() => {
@@ -135,6 +299,40 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
             setIsLoading(false);
             return;
           }
+        } else if (selectedProgram !== 'all') {
+          // Filter by selected program
+          q = query(
+            coursesRef, 
+            where("programId", "==", selectedProgram),
+            where("isActive", "==", true),
+            orderBy("name")
+          );
+        } else if (selectedDepartment !== 'all') {
+          // Filter by selected department
+          q = query(
+            coursesRef, 
+            where("departmentId", "==", selectedDepartment),
+            where("isActive", "==", true),
+            orderBy("name")
+          );
+        } else if (selectedFaculty !== 'all') {
+          // Get department IDs in this faculty
+          const deptIds = departments
+            .filter(dept => dept.facultyId === selectedFaculty)
+            .map(dept => dept.id);
+          
+          if (deptIds.length > 0) {
+            q = query(
+              coursesRef, 
+              where("departmentId", "in", deptIds),
+              where("isActive", "==", true),
+              orderBy("name")
+            );
+          } else {
+            setCourses([]);
+            setIsLoading(false);
+            return;
+          }
         } else {
           // For admin, show all active courses
           q = query(coursesRef, where("isActive", "==", true), orderBy("name"));
@@ -156,7 +354,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     };
     
     loadCourses();
-  }, [userRole, userDepartment]);
+  }, [userRole, userDepartment, selectedDepartment, selectedFaculty, selectedProgram, departments]);
   
   // Load allocations from Firestore with real-time updates
   useEffect(() => {
@@ -178,6 +376,21 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         );
       } else {
         // If no courses in department, don't query allocations
+        setIsLoading(false);
+        return;
+      }
+    } else if (courses.length > 0) {
+      // Filter allocations by the filtered courses
+      const filteredCourseIds = courses.map(course => course.id);
+      
+      if (filteredCourseIds.length > 0) {
+        q = query(
+          allocationsRef, 
+          where("courseId", "in", filteredCourseIds),
+          orderBy("allocatedOn", "desc")
+        );
+      } else {
+        setAllocations([]);
         setIsLoading(false);
         return;
       }
@@ -245,6 +458,25 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     // Role-based filter
     if (userRole === 'hod') {
       return matchesSearch && (allocation.departmentName === userDepartment || allocation.isCrossCutting);
+    }
+    
+    // Program filter
+    if (selectedProgram !== 'all') {
+      return matchesSearch && allocation.programId === selectedProgram;
+    }
+    
+    // Department filter
+    if (selectedDepartment !== 'all') {
+      return matchesSearch && allocation.departmentId === selectedDepartment;
+    }
+    
+    // Faculty filter (requires additional filtering since allocations don't have facultyId)
+    if (selectedFaculty !== 'all') {
+      // Check if allocation's department belongs to selected faculty
+      const departmentInFaculty = departments.some(
+        dept => dept.id === allocation.departmentId && dept.facultyId === selectedFaculty
+      );
+      return matchesSearch && departmentInFaculty;
     }
     
     return matchesSearch;
@@ -525,22 +757,6 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
         </div>
         
         <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search allocations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={`pl-9 pr-4 py-2 rounded-lg w-full sm:w-64 focus:ring-2 
-                ${darkMode 
-                  ? 'bg-gray-800 border-gray-700 focus:ring-blue-600 text-white' 
-                  : 'bg-white border-gray-300 focus:ring-blue-500 text-gray-900'}`}
-            />
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} />
-            </div>
-          </div>
-          
           <button
             onClick={() => { setEditMode(false); setShowAllocateModal(true); }}
             className={`flex items-center justify-center px-4 py-2 rounded-lg font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${userRole !== 'admin' && userRole !== 'hod' ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -549,6 +765,215 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
             <Plus className="h-4 w-4 mr-2" />
             Allocate Course
           </button>
+        </div>
+      </div>
+      
+      {/* Search and filters */}
+      <div className={`mb-6 p-4 rounded-lg ${darkMode ? 'bg-gray-800' : 'bg-white'} shadow-md`}>
+        <div className="flex flex-col gap-4">
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+            <input 
+              type="text" 
+              placeholder="Search allocations by course, code, lecturer or program..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={`pl-10 p-2 w-full rounded-md border ${
+                darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                  : 'bg-white border-gray-300 text-gray-800 placeholder-gray-500'
+              }`}
+            />
+          </div>
+          
+          {/* Filter dropdowns */}
+          {userRole === 'admin' && (
+            <div className="flex flex-col md:flex-row gap-3">
+              {/* Faculty filter */}
+              <div className="relative flex-1">
+                <label className={`block text-xs font-medium mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Faculty
+                </label>
+                <div className="relative">
+                  <Filter className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
+                  <select
+                    value={selectedFaculty}
+                    onChange={(e) => {
+                      setSelectedFaculty(e.target.value);
+                      setSelectedDepartment('all'); // Reset department when faculty changes
+                      setSelectedProgram('all'); // Reset program when faculty changes
+                    }}
+                    className={`pl-8 p-2 w-full rounded-md border appearance-none ${
+                      darkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white' 
+                        : 'bg-white border-gray-300 text-gray-800'
+                    }`}
+                  >
+                    <option value="all" className={darkMode ? 'bg-gray-700' : 'bg-white'}>All Faculties</option>
+                    {faculties.map(faculty => (
+                      <option
+                        key={faculty.id}
+                        value={faculty.id}
+                        className={darkMode ? 'bg-gray-700' : 'bg-white'}
+                      >
+                        {faculty.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                    <svg className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Department filter */}
+              <div className="relative flex-1">
+                <label className={`block text-xs font-medium mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Department
+                </label>
+                <div className="relative">
+                  <Building className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
+                  <select
+                    value={selectedDepartment}
+                    onChange={(e) => {
+                      setSelectedDepartment(e.target.value);
+                      setSelectedProgram('all'); // Reset program when department changes
+                    }}
+                    className={`pl-8 p-2 w-full rounded-md border appearance-none ${
+                      darkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white' 
+                        : 'bg-white border-gray-300 text-gray-800'
+                    }`}
+                    disabled={departments.length === 0}
+                  >
+                    <option value="all" className={darkMode ? 'bg-gray-700' : 'bg-white'}>All Departments</option>
+                    {departments.map(dept => (
+                      <option
+                        key={dept.id}
+                        value={dept.id}
+                        className={darkMode ? 'bg-gray-700' : 'bg-white'}
+                      >
+                        {dept.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                    <svg className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Program filter */}
+              <div className="relative flex-1">
+                <label className={`block text-xs font-medium mb-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Program
+                </label>
+                <div className="relative">
+                  <BookOpen className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
+                  <select
+                    value={selectedProgram}
+                    onChange={(e) => setSelectedProgram(e.target.value)}
+                    className={`pl-8 p-2 w-full rounded-md border appearance-none ${
+                      darkMode 
+                        ? 'bg-gray-700 border-gray-600 text-white' 
+                        : 'bg-white border-gray-300 text-gray-800'
+                    }`}
+                    disabled={programs.length === 0}
+                  >
+                    <option value="all" className={darkMode ? 'bg-gray-700' : 'bg-white'}>All Programs</option>
+                    {programs.map(program => (
+                      <option
+                        key={program.id}
+                        value={program.id}
+                        className={darkMode ? 'bg-gray-700' : 'bg-white'}
+                      >
+                        {program.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                    <svg className={`h-4 w-4 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Clear filters button */}
+              {(selectedFaculty !== 'all' || selectedDepartment !== 'all' || selectedProgram !== 'all' || searchQuery) && (
+                <div className="self-end md:self-center mt-auto flex-shrink-0">
+                  <button
+                    onClick={() => {
+                      setSelectedFaculty('all');
+                      setSelectedDepartment('all');
+                      setSelectedProgram('all');
+                      setSearchQuery('');
+                    }}
+                    className={`px-3 py-2 rounded-md flex items-center text-xs ${
+                      darkMode 
+                        ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' 
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <XCircle className="h-3.5 w-3.5 mr-1" />
+                    Clear Filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Active filters display */}
+          {(selectedFaculty !== 'all' || selectedDepartment !== 'all' || selectedProgram !== 'all') && (
+            <div className="flex flex-wrap gap-2 mt-1">
+              {selectedFaculty !== 'all' && (
+                <div className={`text-xs px-2 py-1 rounded-full flex items-center ${
+                  darkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-700'
+                }`}>
+                  <span>Faculty: {faculties.find(f => f.id === selectedFaculty)?.name}</span>
+                  <button 
+                    onClick={() => setSelectedFaculty('all')}
+                    className="ml-1 p-0.5 rounded-full hover:bg-blue-800/20"
+                  >
+                    <XCircle className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+              
+              {selectedDepartment !== 'all' && (
+                <div className={`text-xs px-2 py-1 rounded-full flex items-center ${
+                  darkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-100 text-indigo-700'
+                }`}>
+                  <span>Department: {departments.find(d => d.id === selectedDepartment)?.name}</span>
+                  <button 
+                    onClick={() => setSelectedDepartment('all')}
+                    className="ml-1 p-0.5 rounded-full hover:bg-indigo-800/20"
+                  >
+                    <XCircle className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+              
+              {selectedProgram !== 'all' && (
+                <div className={`text-xs px-2 py-1 rounded-full flex items-center ${
+                  darkMode ? 'bg-purple-900/30 text-purple-400' : 'bg-purple-100 text-purple-700'
+                }`}>
+                  <span>Program: {programs.find(p => p.id === selectedProgram)?.name}</span>
+                  <button 
+                    onClick={() => setSelectedProgram('all')}
+                    className="ml-1 p-0.5 rounded-full hover:bg-purple-800/20"
+                  >
+                    <XCircle className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
@@ -567,7 +992,9 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
           <h3 className="text-lg font-medium text-gray-900 dark:text-white">No Courses Available</h3>
           <p className="text-sm text-gray-500 dark:text-gray-400 text-center mt-1 mb-3">
             {userRole === 'admin' 
-              ? "There are no courses in the system to allocate." 
+              ? (selectedFaculty !== 'all' || selectedDepartment !== 'all' || selectedProgram !== 'all' 
+                ? "No courses match your filter criteria." 
+                : "There are no courses in the system to allocate.")
               : `There are no courses in your department (${userDepartment}) to allocate.`}
           </p>
         </div>
@@ -656,7 +1083,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
             
             {filteredAllocations.length === 0 ? (
               <div className={`p-4 rounded-lg ${darkMode ? 'bg-gray-800 text-gray-300' : 'bg-gray-50 text-gray-600'}`}>
-                <p>No allocations found. Use the "Allocate Course" button to assign courses to lecturers.</p>
+                <p>No allocations found. Use the &quot;Allocate Course&quot; button to assign courses to lecturers.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -816,7 +1243,7 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
                       {lecturers.length > 0 ? (
                         lecturers.map(lecturer => (
                           <option key={lecturer.id} value={lecturer.id}>
-                            {lecturer.name} ({lecturer.department}) - {lecturer.courseLoad} courses currently
+                            {lecturer.name} ({lecturer.department}) - {lecturer.role === 'hod' ? 'HoD' : 'Lecturer'} - {lecturer.courseLoad} courses currently
                           </option>
                         ))
                       ) : (
