@@ -1,34 +1,35 @@
 import {
-    createUserWithEmailAndPassword,
-    getAuth,
-    sendEmailVerification,
-    sendPasswordResetEmail,
-    updateProfile
+  createUserWithEmailAndPassword,
+  getAuth,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  updateProfile
 } from 'firebase/auth';
 import {
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    updateDoc,
-    where
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import {
-    BookOpen,
-    CheckCircle,
-    Edit,
-    Search,
-    Trash,
-    User,
-    UserCog,
-    Users,
-    XCircle
+  BookOpen,
+  CheckCircle,
+  Edit,
+  Landmark,
+  Search,
+  Trash,
+  User,
+  UserCog,
+  Users,
+  XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useState } from 'react';
@@ -407,8 +408,8 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
       // Validate form based on role
       if (userRole === 'hod') {
         // HoDs can only add users to their department
-        if (currentForm.userType === 'admin') {
-          toast.error('As a Head of Department, you cannot create admin users.');
+        if (currentForm.userType === 'admin' || currentForm.userType === 'dean') {
+          toast.error(`As a Head of Department, you cannot create ${currentForm.userType} users.`);
           setIsSubmitting(false);
           return;
         }
@@ -487,13 +488,14 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
         const updateData = {
           displayName: currentForm.fullName,
           studentNumber: currentForm.userType === 'student' ? currentForm.studentNumber : '',
+          role: currentForm.userType, // Ensure role is correctly set
           updatedAt: serverTimestamp(),
           updatedBy: user.uid
         };
         
         // Add appropriate department field(s) based on user type
-        if (currentForm.userType === 'admin') {
-          // Admin has no department
+        if (currentForm.userType === 'admin' || currentForm.userType === 'dean') {
+          // Admin and Dean have no department
         } else if (currentForm.userType === 'lecturer') {
           // Lecturers have multiple departments
           updateData.departments = currentForm.departments;
@@ -572,7 +574,7 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
             uid: newUser.uid,
             displayName: currentForm.fullName,
             email: currentForm.email,
-            role: currentForm.userType,
+            role: currentForm.userType, // Ensure role is correctly set
             studentNumber: currentForm.userType === 'student' ? currentForm.studentNumber : '',
             isActive: true,
             emailVerified: false,
@@ -583,8 +585,8 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
           };
           
           // Add appropriate department field(s) based on user type
-          if (currentForm.userType === 'admin') {
-            // Admin has no department
+          if (currentForm.userType === 'admin' || currentForm.userType === 'dean') {
+            // Admin and Dean have no department
           } else if (currentForm.userType === 'lecturer') {
             // Lecturers have multiple departments
             userData.departments = currentForm.departments;
@@ -869,6 +871,109 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
               
               {editMode && userToDelete && (
                 <div className="mt-4 border-t pt-4 space-y-3">
+                  <h4 className={`font-medium text-sm ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                    Account Actions
+                  </h4>
+                  
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleResendVerificationEmail(userToDelete)}
+                      disabled={isSubmitting}
+                      className={`flex items-center px-3 py-1.5 text-sm rounded ${
+                        darkMode 
+                          ? 'bg-indigo-900/30 text-indigo-300 hover:bg-indigo-900/50' 
+                          : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      Resend Verification Email
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={() => handleSendPasswordReset(userToDelete)}
+                      disabled={isSubmitting}
+                      className={`flex items-center px-3 py-1.5 text-sm rounded ${
+                        darkMode 
+                          ? 'bg-blue-900/30 text-blue-300 hover:bg-blue-900/50' 
+                          : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                      Send Password Reset
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      
+      case 'dean':
+        return (
+          <div className="space-y-4">
+            <h3 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+              {editMode ? 'Edit Dean' : 'Register Dean'}
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Deans are responsible for managing faculties and overseeing departments.
+            </p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>Full Name</label>
+                <input 
+                  type="text" 
+                  value={currentForm.fullName}
+                  onChange={(e) => handleFormChange('fullName', e.target.value)}
+                  className={`w-full p-2 rounded-md border ${
+                    darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-gray-800'
+                  }`}
+                  placeholder="Enter full name"
+                  disabled={isSubmitting}
+                />
+              </div>
+              
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>Email Address</label>
+                <input 
+                  type="email" 
+                  value={currentForm.email}
+                  onChange={(e) => handleFormChange('email', e.target.value)}
+                  className={`w-full p-2 rounded-md border ${
+                    darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-gray-800'
+                  }`}
+                  placeholder="Enter email address"
+                  disabled={isSubmitting || editMode}
+                />
+                {editMode && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Email addresses cannot be changed after creation.</p>
+                )}
+              </div>
+              
+              {!editMode && (
+                <div className="flex items-center">
+                  <input 
+                    type="checkbox" 
+                    id="firstTimeLogin"
+                    checked={currentForm.isFirstTimeLogin}
+                    onChange={(e) => handleFormChange('isFirstTimeLogin', e.target.checked)}
+                    className="mr-2"
+                    disabled={isSubmitting}
+                  />
+                  <label htmlFor="firstTimeLogin" className={`text-sm ${darkMode ? 'text-gray-200' : 'text-gray-700'}`}>
+                    Require password creation on first login
+                  </label>
+                </div>
+              )}
+              
+              {editMode && userToDelete && (
+                <div className="mt-4 border-t pt-4 space-y-3 border-gray-700">
                   <h4 className={`font-medium text-sm ${darkMode ? 'text-white' : 'text-gray-800'}`}>
                     Account Actions
                   </h4>
@@ -1208,6 +1313,25 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
               </button>
               
               <button 
+                onClick={() => setCurrentForm({...currentForm, userType: 'dean'})}
+                className={`p-4 rounded-lg border text-left ${
+                  darkMode 
+                    ? 'border-gray-700 hover:border-purple-500 bg-gray-800 hover:bg-gray-700' 
+                    : 'border-gray-200 hover:border-purple-500 bg-white hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className={`p-2 rounded-full ${darkMode ? 'bg-purple-900/30' : 'bg-purple-100'}`}>
+                    <Landmark className={`h-5 w-5 ${darkMode ? 'text-purple-400' : 'text-purple-600'}`} />
+                  </div>
+                  <span className="font-medium">Dean</span>
+                </div>
+                <p className="text-xs opacity-70">
+                  Manages faculty and oversees departments
+                </p>
+              </button>
+              
+              <button 
                 onClick={() => setCurrentForm({...currentForm, userType: 'lecturer'})}
                 className={`p-4 rounded-lg border text-left ${
                   darkMode 
@@ -1300,6 +1424,22 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
             </button>
           )}
           
+          {userRole === 'admin' && (
+            <button 
+              onClick={() => handleOpenAddUser('dean')}
+              className={`px-4 py-2 text-base rounded-lg ${
+                darkMode 
+                  ? 'bg-teal-600 hover:bg-teal-700 text-white' 
+                  : 'bg-teal-600 hover:bg-teal-700 text-white'
+              }`}
+            >
+              <span className="flex items-center">
+                <Landmark className="h-5 w-5 mr-2" />
+                Add Dean
+              </span>
+            </button>
+          )}
+          
           <button 
             onClick={() => handleOpenAddUser('lecturer')}
             className={`px-4 py-2 text-base rounded-lg ${
@@ -1378,6 +1518,21 @@ const UsersManagement = ({ darkMode, userRole, userDepartment = 'Computer Scienc
             }`}
           >
             HoDs
+          </button>
+          
+          <button 
+            onClick={() => setActiveTab('dean')}
+            className={`px-4 py-3 font-medium text-base ${
+              activeTab === 'dean'
+                ? darkMode 
+                  ? 'bg-gray-700 text-white' 
+                  : 'bg-gray-100 text-gray-800'
+                : darkMode 
+                  ? 'bg-gray-800 text-gray-400' 
+                  : 'bg-white text-gray-500'
+            }`}
+          >
+            Deans
           </button>
           
           <button 

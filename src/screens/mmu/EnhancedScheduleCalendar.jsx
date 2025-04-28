@@ -456,7 +456,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   };
 
   // Days of the week
-  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
   // Helper functions
   const handlePrevious = () => {

@@ -1,16 +1,16 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import {
-    BookOpen,
-    Building,
-    CheckCircle,
-    Edit,
-    Filter,
-    MoreHorizontal,
-    Plus,
-    Search,
-    Trash2,
-    Users,
-    XCircle
+  BookOpen,
+  Building,
+  CheckCircle,
+  Edit,
+  Filter,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+  XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useRef, useState } from 'react';
@@ -1505,6 +1505,7 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                         <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 2</option>
                         <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 3</option>
                         <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 4</option>
+                        <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Year 5</option>
                       </select>
                     </div>
                     
@@ -1540,6 +1541,7 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                         <option value="2" className={darkMode ? 'bg-gray-800' : 'bg-white'}>2 Units</option>
                         <option value="3" className={darkMode ? 'bg-gray-800' : 'bg-white'}>3 Units</option>
                         <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>4 Units</option>
+                        <option value="4" className={darkMode ? 'bg-gray-800' : 'bg-white'}>5 Units</option>
                       </select>
                     </div>
                   </div>
@@ -1738,6 +1740,7 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
                                       <option value="2">Year 2</option>
                                       <option value="3">Year 3</option>
                                       <option value="4">Year 4</option>
+                                      <option value="4">Year 5</option>
                                     </select>
                                     
                                     <button 

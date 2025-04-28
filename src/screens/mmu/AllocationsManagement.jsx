@@ -362,48 +362,145 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
     
     setIsLoading(true);
     const allocationsRef = collection(db, 'allocations');
-    let q;
     
-    // If user is HoD, only show allocations for courses from their department
-    if (userRole === 'hod') {
-      const departmentCourseIds = courses.map(course => course.id);
+    // Function to process query results in batches
+    const batchProcess = async (courseIds) => {
+      // Firebase "in" operator only supports up to 30 values
+      // So we need to batch our queries if we have more than 30 course IDs
+      const batchSize = 30;
+      let allAllocations = [];
       
-      if (departmentCourseIds.length > 0) {
-        q = query(
-          allocationsRef, 
-          where("courseId", "in", departmentCourseIds),
-          orderBy("allocatedOn", "desc")
-        );
-      } else {
-        // If no courses in department, don't query allocations
-        setIsLoading(false);
-        return;
+      // Process in batches of 30
+      for (let i = 0; i < courseIds.length; i += batchSize) {
+        const batch = courseIds.slice(i, i + batchSize);
+        
+        try {
+          const batchQuery = query(
+            allocationsRef,
+            where("courseId", "in", batch),
+            orderBy("allocatedOn", "desc")
+          );
+          
+          const batchSnapshot = await getDocs(batchQuery);
+          const batchData = batchSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          
+          allAllocations = [...allAllocations, ...batchData];
+        } catch (error) {
+          console.error(`Error in batch ${i}-${i+batchSize}:`, error);
+        }
       }
-    } else if (courses.length > 0) {
-      // Filter allocations by the filtered courses
-      const filteredCourseIds = courses.map(course => course.id);
       
-      if (filteredCourseIds.length > 0) {
-        q = query(
-          allocationsRef, 
-          where("courseId", "in", filteredCourseIds),
-          orderBy("allocatedOn", "desc")
-        );
-      } else {
-        setAllocations([]);
-        setIsLoading(false);
-        return;
-      }
-    } else {
-      // For admin, show all allocations
-      q = query(allocationsRef, orderBy("allocatedOn", "desc"));
-    }
+      return allAllocations;
+    };
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allocationData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+    let unsubscribe = () => {};
+    
+    const loadAllocations = async () => {
+      try {
+        // If user is HoD, only show allocations for courses from their department
+        if (userRole === 'hod') {
+          const departmentCourseIds = courses.map(course => course.id);
+          
+          if (departmentCourseIds.length > 0) {
+            // If we have too many courses, use batched processing
+            if (departmentCourseIds.length > 30) {
+              const allocations = await batchProcess(departmentCourseIds);
+              processAllocations(allocations);
+            } else {
+              // Otherwise use realtime updates for smaller datasets
+              const q = query(
+                allocationsRef, 
+                where("courseId", "in", departmentCourseIds),
+                orderBy("allocatedOn", "desc")
+              );
+              
+              unsubscribe = onSnapshot(q, 
+                snapshot => {
+                  const allocationData = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                  }));
+                  processAllocations(allocationData);
+                }, 
+                error => {
+                  console.error("Error loading allocations:", error);
+                  toast.error("Failed to load allocations");
+                  setIsLoading(false);
+                }
+              );
+            }
+          } else {
+            // If no courses in department, don't query allocations
+            setAllocations([]);
+            setIsLoading(false);
+          }
+        } else if (courses.length > 0) {
+          // Filter allocations by the filtered courses
+          const filteredCourseIds = courses.map(course => course.id);
+          
+          if (filteredCourseIds.length > 0) {
+            // If we have too many courses, use batched processing
+            if (filteredCourseIds.length > 30) {
+              const allocations = await batchProcess(filteredCourseIds);
+              processAllocations(allocations);
+            } else {
+              // Otherwise use realtime updates for smaller datasets
+              const q = query(
+                allocationsRef, 
+                where("courseId", "in", filteredCourseIds),
+                orderBy("allocatedOn", "desc")
+              );
+              
+              unsubscribe = onSnapshot(q, 
+                snapshot => {
+                  const allocationData = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                  }));
+                  processAllocations(allocationData);
+                }, 
+                error => {
+                  console.error("Error loading allocations:", error);
+                  toast.error("Failed to load allocations");
+                  setIsLoading(false);
+                }
+              );
+            }
+          } else {
+            setAllocations([]);
+            setIsLoading(false);
+          }
+        } else {
+          // For admin, show all allocations
+          const q = query(allocationsRef, orderBy("allocatedOn", "desc"));
+          
+          unsubscribe = onSnapshot(q, 
+            snapshot => {
+              const allocationData = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+              }));
+              processAllocations(allocationData);
+            }, 
+            error => {
+              console.error("Error loading allocations:", error);
+              toast.error("Failed to load allocations");
+              setIsLoading(false);
+            }
+          );
+        }
+      } catch (error) {
+        console.error("Error in allocation loading:", error);
+        toast.error("Failed to load allocations");
+        setIsLoading(false);
+      }
+    };
+    
+    // Process the allocations data
+    const processAllocations = (allocationData) => {
       setAllocations(allocationData);
       
       // Update lecturer course loads
@@ -430,12 +527,12 @@ const AllocationsManagement = ({ darkMode, userRole, userDepartment = 'Computer 
       }
       
       setIsLoading(false);
-    }, (error) => {
-      console.error("Error loading allocations:", error);
-      toast.error("Failed to load allocations");
-      setIsLoading(false);
-    });
+    };
     
+    // Start loading
+    loadAllocations();
+    
+    // Return cleanup function
     return () => unsubscribe();
   }, [allLecturers.length, courses, userRole, currentAllocation.courseId]);
 
