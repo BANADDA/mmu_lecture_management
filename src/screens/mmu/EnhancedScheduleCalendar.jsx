@@ -249,6 +249,35 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         }));
         setCourses(coursesData);
         
+        // Fetch allocations to get lecturer information
+        const allocationsRef = collection(db, 'allocations');
+        const allocationsSnapshot = await getDocs(allocationsRef);
+        const allocationsData = allocationsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        // Create a map of courseId to lecturer information for quick lookup
+        const courseAllocations = {};
+        allocationsData.forEach(allocation => {
+          // Store by courseId
+          courseAllocations[allocation.courseId] = {
+            lecturerId: allocation.lecturerId,
+            lecturerName: allocation.lecturerName
+          };
+          
+          // Also store by courseCode for fallback lookup
+          if (allocation.courseCode) {
+            courseAllocations[allocation.courseCode] = {
+              lecturerId: allocation.lecturerId,
+              lecturerName: allocation.lecturerName
+            };
+          }
+        });
+        
+        console.log('Loaded allocation data:', allocationsData.length, 'entries');
+        console.log('Allocation lookup map:', courseAllocations);
+        
         // Fetch rooms
         const roomsSnapshot = await getDocs(collection(db, 'rooms'));
         const roomsData = roomsSnapshot.docs.map(doc => ({
@@ -297,15 +326,36 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         }
         
         const scheduleSnapshot = await getDocs(scheduleQuery);
-        const scheduleData = scheduleSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          // Ensure full information is available for display
-          lecturer: lecturersData.find(l => l.id === doc.data().lecturerId)?.name || 'Unknown',
-          room: roomsData.find(r => r.id === doc.data().roomId)?.name || 'Unknown',
-          courseName: coursesData.find(c => c.id === doc.data().courseId)?.name || 'Unknown',
-          courseCode: coursesData.find(c => c.id === doc.data().courseId)?.code || 'Unknown'
-        }));
+        // Ensure full information is available for display
+        const scheduleData = scheduleSnapshot.docs.map(doc => {
+          const data = doc.data();
+          const courseId = data.courseId;
+          const course = coursesData.find(c => c.id === courseId);
+          const courseCode = course?.code || data.courseCode;
+          
+          // Check if we have allocation data for this course (by ID or code)
+          const allocation = courseAllocations[courseId] || courseAllocations[courseCode];
+          
+          // Debug information for this event
+          if (courseCode) {
+            console.log(`Schedule event lookup for ${courseCode}:`, 
+              allocation ? `Found lecturer ${allocation.lecturerName}` : 'No allocation found');
+          }
+          
+          return {
+            id: doc.id,
+            ...data,
+            // Use allocation data if available, otherwise use existing data or defaults
+            lecturer: allocation?.lecturerName || 
+                     lecturersData.find(l => l.id === data.lecturerId)?.name || 
+                     data.lecturer || 
+                     'Not Assigned',
+            lecturerId: allocation?.lecturerId || data.lecturerId,
+            room: roomsData.find(r => r.id === data.roomId)?.name || data.room || 'TBA',
+            courseName: course?.name || data.courseName || 'Unknown',
+            courseCode: courseCode || 'Unknown'
+          };
+        });
         
         // If we're showing a specific department/role, we need to fetch cross-cutting courses separately
         // since Firestore doesn't support OR queries directly in our current setup
@@ -2944,20 +2994,83 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   };
 
   // Handle form changes
-  const handleFormChange = (field, value) => {
-    if (field === 'courseId') {
+  const handleFormChange = async (field, value) => {
+    if (field === 'courseId' && value) {
       const selectedCourse = courses.find(c => c.id === value);
-      setCurrentEvent(prev => ({
-        ...prev,
+      
+      // Default event data from the course
+      const eventData = {
         [field]: value,
         title: selectedCourse ? selectedCourse.name : '',
-        lecturerId: selectedCourse && selectedCourse.lecturer ? selectedCourse.lecturer : '',
-        // Set cross-cutting properties from the selected course
         isCrossCutting: selectedCourse ? selectedCourse.isCrossCutting || false : false,
         crossCuttingPrograms: selectedCourse && selectedCourse.crossCuttingPrograms ? 
           selectedCourse.crossCuttingPrograms : [],
         crossCuttingDepartments: selectedCourse && selectedCourse.crossCuttingDepartments ? 
           selectedCourse.crossCuttingDepartments : []
+      };
+      
+      // Check for existing allocation for this course
+      try {
+        console.log(`Checking allocations for courseId: ${value}`);
+        
+        // First try to find by courseId
+        const allocationsRef = collection(db, 'allocations');
+        const q = query(allocationsRef, where("courseId", "==", value));
+        const allocationsSnapshot = await getDocs(q);
+        
+        if (!allocationsSnapshot.empty) {
+          // Use the first allocation found (should typically be only one)
+          const allocation = allocationsSnapshot.docs[0].data();
+          console.log('Found allocation by courseId:', allocation);
+          
+          // Update with lecturer information from allocation
+          eventData.lecturerId = allocation.lecturerId || '';
+          eventData.lecturer = allocation.lecturerName || 'Not Assigned';
+          
+          // Show feedback that lecturer was automatically assigned
+          preventDuplicateToast(() => {
+            toast.success(`Lecturer ${allocation.lecturerName} automatically assigned from course allocation`);
+          });
+        } else if (selectedCourse?.code) {
+          // If no direct ID match, try by course code
+          console.log(`Trying to find allocation by course code: ${selectedCourse.code}`);
+          const codeQuery = query(allocationsRef, where("courseCode", "==", selectedCourse.code));
+          const codeSnapshot = await getDocs(codeQuery);
+          
+          if (!codeSnapshot.empty) {
+            const allocation = codeSnapshot.docs[0].data();
+            console.log('Found allocation by courseCode:', allocation);
+            
+            // Update with lecturer information from allocation
+            eventData.lecturerId = allocation.lecturerId || '';
+            eventData.lecturer = allocation.lecturerName || 'Not Assigned';
+            
+            // Show feedback that lecturer was automatically assigned
+            preventDuplicateToast(() => {
+              toast.success(`Lecturer ${allocation.lecturerName} automatically assigned from course allocation`);
+            });
+          } else {
+            console.log('No allocation found for this course');
+            // No allocation found, set lecturer to empty
+            eventData.lecturerId = '';
+            eventData.lecturer = 'Not Assigned';
+          }
+        } else {
+          // No allocation found, set lecturer to empty
+          console.log('No allocation found for this course');
+          eventData.lecturerId = '';
+          eventData.lecturer = 'Not Assigned';
+        }
+      } catch (error) {
+        console.error("Error checking for course allocation:", error);
+        // Set empty lecturer if error occurs
+        eventData.lecturerId = '';
+        eventData.lecturer = 'Not Assigned';
+      }
+      
+      setCurrentEvent(prev => ({
+        ...prev,
+        ...eventData
       }));
     } else if (field === 'eventDate' && value) {
       // When date is selected, automatically set the day of week
@@ -3068,7 +3181,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         courseName: selectedCourse?.name || '',
         courseCode: selectedCourse?.code || '',
         lecturerId: currentEvent.lecturerId,
-        lecturer: selectedLecturer?.name || 'Not Assigned',
+        lecturer: currentEvent.lecturer || selectedLecturer?.name || 'Not Assigned',
         roomId: currentEvent.roomId,
         room: selectedRoom?.name || '',
         dayOfWeek: parseInt(currentEvent.dayOfWeek),
@@ -3960,6 +4073,35 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                     </select>
                   </div>
                   
+                  {/* Assigned Lecturer Info - Show immediately after course selection */}
+                  {currentEvent.courseId && (
+                    <div className={`mt-2 px-3 py-2 rounded ${
+                      currentEvent.lecturerId 
+                        ? (darkMode ? 'bg-green-900/20' : 'bg-green-50') 
+                        : (darkMode ? 'bg-gray-800' : 'bg-gray-100')
+                    }`}>
+                      <div className="flex items-center">
+                        <User className={`h-4 w-4 mr-2 ${
+                          currentEvent.lecturerId 
+                            ? (darkMode ? 'text-green-400' : 'text-green-600') 
+                            : (darkMode ? 'text-gray-400' : 'text-gray-500')
+                        }`} />
+                        <span className={`text-sm font-medium ${
+                          darkMode ? 'text-gray-200' : 'text-gray-700'
+                        }`}>
+                          Assigned Lecturer: 
+                          <span className={`ml-1 ${
+                            currentEvent.lecturerId 
+                              ? (darkMode ? 'text-green-400 font-bold' : 'text-green-700 font-bold') 
+                              : (darkMode ? 'text-gray-400 italic' : 'text-gray-500 italic')
+                          }`}>
+                            {currentEvent.lecturer || 'Not Assigned'}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  
                   {/* Cross-cutting course indicator */}
                   {currentEvent.courseId && currentEvent.isCrossCutting && (
                     <div className={`mt-3 p-3 rounded-lg ${
@@ -4015,6 +4157,33 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                               No specific programs defined for cross-cutting.
                             </div>
                           )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Allocated Lecturer Indicator */}
+                  {currentEvent.courseId && currentEvent.lecturerId && (
+                    <div className={`mt-3 p-3 rounded-lg ${
+                      darkMode ? 'bg-green-900/20 border border-green-800/30' : 'bg-green-100 border border-green-200'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" 
+                          className={`h-5 w-5 mt-0.5 ${darkMode ? 'text-green-400' : 'text-green-600'}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <div>
+                          <h4 className={`font-medium text-sm ${darkMode ? 'text-green-400' : 'text-green-700'}`}>
+                            Allocated Lecturer
+                          </h4>
+                          <p className={`text-sm font-medium mt-1 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {currentEvent.lecturer}
+                          </p>
+                          <p className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                            This lecturer has been assigned to teach this course.
+                          </p>
                         </div>
                       </div>
                     </div>
