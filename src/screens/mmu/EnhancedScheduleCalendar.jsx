@@ -2816,27 +2816,47 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         (!newEvent.isRecurring && existingEvent.isRecurring && dayOfWeekCheck && dateSpecificCheck); // New is not recurring, existing is, but on same day/date
       
       if (shouldCheckConflict && checkTimeConflict(existingEvent, newEvent)) {
-        // Check for lecturer conflict
-        if (existingEvent.lecturerId === newEvent.lecturerId) {
+        // 1. Check for lecturer conflict - same lecturer teaching two different courses at the same time
+        if (existingEvent.lecturerId && newEvent.lecturerId && existingEvent.lecturerId === newEvent.lecturerId) {
+          // Find lecturer name for better error message
+          const lecturerName = lecturers.find(l => l.id === newEvent.lecturerId)?.name || 'Unknown lecturer';
+          
           conflicts.push({
             type: 'lecturer',
-            message: `Lecturer ${lecturers.find(l => l.id === newEvent.lecturerId)?.name} already has a class during this time${newEvent.isRecurring ? ' (recurring weekly)' : ' on ' + new Date(newEvent.eventDate).toLocaleDateString()}.`
+            message: `Lecturer ${lecturerName} already has a class (${existingEvent.courseName}) during this time${newEvent.isRecurring ? ' (recurring weekly)' : ' on ' + new Date(newEvent.eventDate).toLocaleDateString()}.`,
+            severity: 'error', // Cannot proceed with this conflict
+            event: existingEvent
           });
         }
         
-        // Check for room conflict
-        if (existingEvent.roomId === newEvent.roomId) {
+        // 2. Check for student group conflict - same year/semester students having multiple classes
+        // First, get course details to compare year and semester
+        const newCourse = courses.find(c => c.id === newEvent.courseId);
+        const existingCourse = courses.find(c => c.id === existingEvent.courseId);
+        
+        if (newCourse && existingCourse && 
+            newCourse.programId === existingCourse.programId && 
+            newCourse.yearOfStudy === existingCourse.yearOfStudy && 
+            newCourse.semester === existingCourse.semester) {
+          
+          conflicts.push({
+            type: 'student',
+            message: `Students in Year ${newCourse.yearOfStudy}, Semester ${newCourse.semester} of ${programsList.find(p => p.id === newCourse.programId)?.name || 'Unknown Program'} have another class (${existingCourse.name}) scheduled at this time.`,
+            severity: 'error', // Cannot proceed with this conflict
+            event: existingEvent
+          });
+        }
+        
+        // 3. Check for room conflict - but allow scheduling without a room
+        if (newEvent.roomId && existingEvent.roomId && newEvent.roomId === existingEvent.roomId) {
+          // Find room name for better error message
+          const roomName = rooms.find(r => r.id === newEvent.roomId)?.name || 'Unknown room';
+          
           conflicts.push({
             type: 'room',
-            message: `Room ${rooms.find(r => r.id === newEvent.roomId)?.name} is already booked during this time${newEvent.isRecurring ? ' (recurring weekly)' : ' on ' + new Date(newEvent.eventDate).toLocaleDateString()}.`
-          });
-        }
-        
-        // Check for student group conflict (same course)
-        if (existingEvent.courseId === newEvent.courseId) {
-          conflicts.push({
-            type: 'course',
-            message: `Students taking ${courses.find(c => c.id === newEvent.courseId)?.name} already have a class during this time${newEvent.isRecurring ? ' (recurring weekly)' : ' on ' + new Date(newEvent.eventDate).toLocaleDateString()}.`
+            message: `Room ${roomName} is already booked for ${existingEvent.courseName} during this time${newEvent.isRecurring ? ' (recurring weekly)' : ' on ' + new Date(newEvent.eventDate).toLocaleDateString()}.`,
+            severity: 'error', // Cannot proceed with this conflict
+            event: existingEvent
           });
         }
       }
@@ -2931,7 +2951,13 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
         ...prev,
         [field]: value,
         title: selectedCourse ? selectedCourse.name : '',
-        lecturerId: selectedCourse && selectedCourse.lecturer ? selectedCourse.lecturer : ''
+        lecturerId: selectedCourse && selectedCourse.lecturer ? selectedCourse.lecturer : '',
+        // Set cross-cutting properties from the selected course
+        isCrossCutting: selectedCourse ? selectedCourse.isCrossCutting || false : false,
+        crossCuttingPrograms: selectedCourse && selectedCourse.crossCuttingPrograms ? 
+          selectedCourse.crossCuttingPrograms : [],
+        crossCuttingDepartments: selectedCourse && selectedCourse.crossCuttingDepartments ? 
+          selectedCourse.crossCuttingDepartments : []
       }));
     } else if (field === 'eventDate' && value) {
       // When date is selected, automatically set the day of week
@@ -2954,7 +2980,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
   // Save event to Firestore
   const handleAddEvent = async () => {
     // Validate required fields
-    if (!currentEvent.courseId || !currentEvent.roomId || !currentEvent.startTime || 
+    if (!currentEvent.courseId || !currentEvent.startTime || 
         !currentEvent.endTime || !currentEvent.sessionType || !currentEvent.dayOfWeek || !currentEvent.eventDate) {
       preventDuplicateToast(() => {
         toast.error('Please fill all required fields');
@@ -2994,10 +3020,36 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     // Check for scheduling conflicts
     const conflicts = checkSchedulingConflicts(currentEvent);
     if (conflicts.length > 0) {
-      // Show conflicts but allow user to proceed if they want
-      preventDuplicateToast(() => {
-        toast.error(`Warning: ${conflicts.length} scheduling conflicts detected. Review them in the conflicts section.`);
-      });
+      // Filter for error-level conflicts that should prevent scheduling
+      const errorConflicts = conflicts.filter(c => c.severity === 'error');
+      
+      if (errorConflicts.length > 0) {
+        // Show each error conflict as a separate toast
+        errorConflicts.forEach(conflict => {
+          preventDuplicateToast(() => {
+            toast.error(conflict.message);
+          });
+        });
+        
+        // Set collisions for display in UI
+        setCollisions(conflicts);
+        
+        // Don't proceed with scheduling
+        return;
+      }
+      
+      // For warning-level conflicts, show warnings but allow scheduling to proceed
+      const warningConflicts = conflicts.filter(c => c.severity !== 'error');
+      if (warningConflicts.length > 0) {
+        warningConflicts.forEach(conflict => {
+          preventDuplicateToast(() => {
+            toast.warning(conflict.message);
+          });
+        });
+      }
+      
+      // Set all conflicts for display in UI
+      setCollisions(conflicts);
     }
     
     try {
@@ -3200,14 +3252,14 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     return (
       <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${darkMode ? 'bg-black/70' : 'bg-gray-800/50'}`}>
         <div 
-          className={`relative w-full max-w-md rounded-lg shadow-xl ${
+          className={`relative w-full max-w-lg rounded-lg shadow-xl ${
             darkMode ? 'bg-gray-900 text-white' : 'bg-white text-gray-800'
           }`}
         >
           {/* Header with color bar based on course type */}
           <div className={`h-2 w-full rounded-t-lg ${sessionType.bgFull}`}></div>
           
-          <div className="p-6">
+          <div className="p-6 max-h-[60vh] overflow-y-auto">{/* Reduced to 60vh to ensure it doesn't touch top/bottom nav */}
             <div className="flex justify-between items-start mb-4">
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -3274,6 +3326,47 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                 </div>
               </div>
             </div>
+            
+            {/* Cross-cutting information */}
+            {selectedEvent.isCrossCutting && selectedEvent.crossCuttingPrograms && selectedEvent.crossCuttingPrograms.length > 0 && (
+              <div className="mb-4">
+                <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">Cross-Cutting Programs</div>
+                <div className={`p-3 rounded-lg ${
+                  darkMode ? 'bg-purple-900/20 border border-purple-800/30' : 'bg-purple-100 border border-purple-200'
+                }`}>
+                  <div className="max-h-32 overflow-y-auto">
+                    {selectedEvent.crossCuttingPrograms.map(cp => {
+                      const program = programsList.find(p => p.id === (typeof cp === 'object' ? cp.programId : cp));
+                      
+                      return program ? (
+                        <div key={typeof cp === 'object' ? cp.programId : cp} 
+                          className={`mb-2 p-2 rounded-md text-sm flex items-center justify-between ${
+                            darkMode ? 'bg-gray-800 text-gray-200' : 'bg-white text-gray-800 border border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" 
+                              className={`h-4 w-4 mr-2 ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}
+                              fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            <span>{program.name}</span>
+                          </div>
+                          {typeof cp === 'object' && cp.yearOffered && (
+                            <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                              darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'
+                            }`}>
+                              Year {cp.yearOffered}
+                            </span>
+                          )}
+                        </div>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
             
             <div className="flex justify-between">
               <button
@@ -3867,6 +3960,66 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                     </select>
                   </div>
                   
+                  {/* Cross-cutting course indicator */}
+                  {currentEvent.courseId && currentEvent.isCrossCutting && (
+                    <div className={`mt-3 p-3 rounded-lg ${
+                      darkMode ? 'bg-purple-900/20 border border-purple-800/30' : 'bg-purple-100 border border-purple-200'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" 
+                          className={`h-5 w-5 mt-0.5 ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                            d="M7 7h.01M7 17h.01M17 7h.01M17 17h.01M7 12h.01M12 7h.01M12 12h.01M12 17h.01M17 12h.01M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0 0c2.5 0 4.5-4.5 4.5-10S14.5 2 12 2 7.5 6.5 7.5 12s2 10 4.5 10z" />
+                        </svg>
+                        <div>
+                          <h4 className={`font-medium text-sm ${darkMode ? 'text-purple-400' : 'text-purple-700'}`}>
+                            Cross-Cutting Course
+                          </h4>
+                          <p className={`text-xs ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                            This course is shared across multiple programs.
+                          </p>
+                          
+                          {currentEvent.crossCuttingPrograms && currentEvent.crossCuttingPrograms.length > 0 ? (
+                            <div className="mt-2">
+                              <h5 className={`text-xs font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                                Shared with:
+                              </h5>
+                              <div className={`max-h-24 overflow-y-auto p-2 rounded ${
+                                darkMode ? 'bg-gray-800' : 'bg-white'
+                              }`}>
+                                {currentEvent.crossCuttingPrograms.map(cp => {
+                                  const program = programsList.find(p => p.id === (typeof cp === 'object' ? cp.programId : cp));
+                                  
+                                  return program ? (
+                                    <div key={typeof cp === 'object' ? cp.programId : cp} 
+                                      className={`text-xs py-1 px-2 mb-1 rounded flex items-center justify-between ${
+                                        darkMode ? 'bg-gray-700' : 'bg-gray-100'
+                                      }`}
+                                    >
+                                      <span>{program.name}</span>
+                                      {typeof cp === 'object' && cp.yearOffered && (
+                                        <span className={`ml-2 px-1.5 py-0.5 rounded ${
+                                          darkMode ? 'bg-gray-600 text-gray-300' : 'bg-gray-200 text-gray-700'
+                                        }`}>
+                                          Year {cp.yearOffered}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : null;
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className={`mt-2 text-xs italic ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                              No specific programs defined for cross-cutting.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
                   <div>
                     <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Session Type</label>
                     <div className="grid grid-cols-2 gap-2">
@@ -3960,22 +4113,22 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                   
                     <div>
                     <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Room</label>
-                      <select 
-                        value={currentEvent.roomId}
-                        onChange={(e) => handleFormChange('roomId', e.target.value)}
-                        className={`w-full p-2 rounded-md border ${
+                    <select 
+                      value={currentEvent.roomId}
+                      onChange={(e) => handleFormChange('roomId', e.target.value)}
+                      className={`w-full p-2 rounded-md border ${
                         darkMode 
                           ? 'bg-gray-800 border-gray-700 text-white hover:border-gray-600 focus:ring-blue-600 focus:border-blue-600' 
                           : 'bg-white border-gray-300 text-gray-800 focus:ring-blue-500 focus:border-blue-500'
-                        }`}
-                      >
-                      <option value="" className={darkMode ? 'bg-gray-800' : 'bg-white'}>Select Room</option>
-                        {rooms.map(room => (
+                      }`}
+                    >
+                      <option value="" className={darkMode ? 'bg-gray-800' : ''}>Select Room (Optional)</option>
+                      {rooms.map(room => (
                         <option key={room.id} value={room.id} className={darkMode ? 'bg-gray-800' : 'bg-white'}>
                           {room.name} ({room.type}) - Capacity: {room.capacity}
                           </option>
-                        ))}
-                      </select>
+                      ))}
+                    </select>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">
@@ -4077,18 +4230,29 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                     </p>
                   )}
                   
-                  <div className={`p-3 rounded-md ${darkMode ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-100'}`}>
-                    <div className="flex">
-                      <div className={`flex-shrink-0 ${darkMode ? 'text-blue-400' : 'text-blue-500'}`}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.75.75 0 00.736-.743 6.653 6.653 0 012.096-4.5.75.75 0 10-.993-1.124 8.146 8.146 0 00-2.592 5.5A2.25 2.25 0 016.75 12h.001a2.25 2.25 0 012.249-2.25h.75a.75.75 0 000-1.5h-.75a3.75 3.75 0 00-3.75 3.75c0 1.49.868 2.777 2.126 3.384a.75.75 0 10.624-1.368 2.25 2.25 0 01-1.229-1.125 2.247 2.247 0 012.229-1.892h.75a.75.75 0 000-1.5H9z" clipRule="evenodd" />
-                        </svg>
-                    </div>
-                      <div className="ml-3">
-                        <h3 className={`text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-800'}`}>Schedule Check</h3>
-                        <div className={`mt-2 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                          <p>The system will automatically check for collisions with existing lectures for the same lecturer, room, or student groups.</p>
-                        </div>
+                  {/* Schedule Check section */}
+                  <div className={`mt-3 p-3 rounded-lg ${
+                    darkMode ? 'bg-blue-900/20 border border-blue-800/30' : 'bg-blue-50 border border-blue-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" 
+                        className={`h-5 w-5 mt-0.5 ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <h3 className={`text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-700'}`}>
+                          Schedule Check
+                        </h3>
+                        <p className={`text-xs mt-1 ${darkMode ? 'text-blue-300' : 'text-blue-600'}`}>
+                          The system will automatically check for conflicts when scheduling:
+                        </p>
+                        <ul className={`text-xs mt-1 list-disc pl-4 space-y-1 ${darkMode ? 'text-blue-300' : 'text-blue-600'}`}>
+                          <li>Lecturer conflicts: The same lecturer cannot teach multiple classes at the same time</li>
+                          <li>Student group conflicts: The same student group (program/year/semester) cannot have multiple classes at the same time</li>
+                          <li>Room conflicts: The same room cannot be double-booked for different classes</li>
+                        </ul>
                       </div>
                     </div>
                   </div>
