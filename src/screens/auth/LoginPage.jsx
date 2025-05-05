@@ -191,18 +191,6 @@ const LoginPage = ({ darkMode, toggleDarkMode }) => {
           </button>
         </form>
 
-        <div className={`mt-6 text-center p-3 rounded-lg ${
-          darkMode 
-            ? 'bg-blue-900/20 border border-blue-800/30' 
-            : 'bg-blue-50 border border-blue-100'
-        }`}>
-          <p className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-700'}`}>
-            <strong>Default Admin Login:</strong><br/>
-            Email: admin@mmu.ac.ug<br/>
-            Password: admin123
-          </p>
-        </div>
-
         <div className="mt-8 text-center">
           <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
             Don&apos;t have an account? Contact the system administrator.

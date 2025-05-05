@@ -1,16 +1,16 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import {
-  BookOpen,
-  Building,
-  CheckCircle,
-  Edit,
-  Filter,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Trash2,
-  Users,
-  XCircle
+    BookOpen,
+    Building,
+    CheckCircle,
+    Edit,
+    Filter,
+    MoreHorizontal,
+    Plus,
+    Search,
+    Trash2,
+    Users,
+    XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useRef, useState } from 'react';
@@ -286,18 +286,32 @@ const CoursesManagement = ({ darkMode, userRole, userDepartment = 'Computer Scie
     
     // Program filter
     if (selectedProgram !== 'all') {
-      return matchesSearch && (course.programId === selectedProgram);
+      const isPrimaryProgram = course.programId === selectedProgram;
+      const isApplicableCrossCutting =
+        course.isCrossCutting &&
+        Array.isArray(course.crossCuttingPrograms) &&
+        course.crossCuttingPrograms.some(cp => cp.programId === selectedProgram);
+
+      return matchesSearch && (isPrimaryProgram || isApplicableCrossCutting);
     }
     
     // Department filter
     if (selectedDepartment !== 'all') {
-      return matchesSearch && (course.departmentId === selectedDepartment || course.isCrossCutting);
+      // If a department is selected, show its courses PLUS any cross-cutting ones
+      const isInDepartment = course.departmentId === selectedDepartment;
+      const isCrossCuttingAndVisible = course.isCrossCutting; // Cross-cutting are visible unless filtered by program
+
+      return matchesSearch && (isInDepartment || isCrossCuttingAndVisible);
     }
     
-    // Faculty filter for cross-cutting courses (since we already filter by department in the query)
+    // Faculty filter for cross-cutting courses (primary filtering is done via department IDs in the query)
     if (selectedFaculty !== 'all') {
-      // Only need to check for cross-cutting courses here as department filtering is done at DB level
-      return matchesSearch && course.isCrossCutting;
+      // Check if the course belongs to a department within the selected faculty OR if it's cross-cutting
+      const department = departments.find(d => d.id === course.departmentId);
+      const isInFaculty = department && department.facultyId === selectedFaculty;
+      const isCrossCuttingAndVisible = course.isCrossCutting; // Cross-cutting are visible unless filtered by program/dept
+      
+      return matchesSearch && (isInFaculty || isCrossCuttingAndVisible);
     }
     
     return matchesSearch;

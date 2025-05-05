@@ -1,26 +1,27 @@
 import {
-    collection,
-    deleteDoc,
-    doc,
-    getDocs,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    setDoc,
-    updateDoc
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
 } from 'firebase/firestore';
 import {
-    BookMarked,
-    Building,
-    CheckCircle,
-    Edit,
-    Plus,
-    Trash2,
-    XCircle
+  BookMarked,
+  Building,
+  CheckCircle,
+  Edit,
+  Plus,
+  Trash2,
+  XCircle
 } from 'lucide-react';
 import PropTypes from 'prop-types';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase/firebase';
@@ -52,18 +53,152 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
   const [deans, setDeans] = useState([]);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   
+  // State for selected faculty departments
+  const [facultyDepartments, setFacultyDepartments] = useState([]);
+  const [loadingDepartments, setLoadingDepartments] = useState(false);
+  
+  // Use a ref to keep track of the current faculties data without triggering re-renders
+  const facultiesRef = useRef([]);
+  
+  // Update the ref whenever faculties change
+  useEffect(() => {
+    facultiesRef.current = faculties;
+  }, [faculties]);
+  
   // Firebase functions for faculty management
-  // Function to load all faculties from Firestore
+  // Function to load all faculties from Firestore and set up real-time listeners
   useEffect(() => {
     setIsLoading(true);
-    const facultiesRef = collection(db, 'faculties');
-    const q = query(facultiesRef, orderBy('createdAt', 'desc'));
+    console.log("Setting up faculty and count listeners");
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const facultyData = snapshot.docs.map(doc => ({
+    // Collection references
+    const facultiesCol = collection(db, 'faculties');
+    const departmentsCol = collection(db, 'departments');
+    const programsCol = collection(db, 'programs');
+    
+    // First, directly fetch faculties to verify data access
+    const fetchInitialData = async () => {
+      try {
+        const facultiesQuery = query(facultiesCol, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(facultiesQuery);
+        
+        if (snapshot.empty) {
+          console.log("No faculties found in direct fetch");
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log(`Direct fetch found ${snapshot.docs.length} faculties`);
+        
+        // Log first document for debugging
+        if (snapshot.docs.length > 0) {
+          console.log("First faculty:", snapshot.docs[0].id, snapshot.docs[0].data());
+        }
+        
+        // Set initial data
+        const facultyData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        setFaculties(facultyData);
+      } catch (error) {
+        console.error("Error in direct faculty fetch:", error);
+      }
+    };
+    
+    // Execute initial fetch
+    fetchInitialData();
+    
+    // Keep snapshots at the top level so they're accessible by all listeners
+    let departmentsSnapshot = [];
+    let programsSnapshot = [];
+    
+    // Main query for faculties - define this after initial fetch
+    const facultiesQuery = query(facultiesCol, orderBy('createdAt', 'desc'));
+    
+    // Function to update counts with the current snapshot data
+    const updateCounts = (facultiesToUpdate) => {
+      const updatedFaculties = [...facultiesToUpdate];
+      
+      if (!updatedFaculties.length) return updatedFaculties;
+      
+      // Create lookup map for faculties
+      const facultyMap = {};
+      updatedFaculties.forEach(faculty => {
+        facultyMap[faculty.id] = faculty;
+        // Reset counts
+        faculty.departments = 0;
+        faculty.programs = 0;
+      });
+      
+      // Count departments for each faculty
+      departmentsSnapshot.forEach(doc => {
+        const dept = doc.data();
+        const facultyId = dept.facultyId;
+        if (facultyId && facultyMap[facultyId]) {
+          facultyMap[facultyId].departments += 1;
+        }
+      });
+      
+      // Count programs for each faculty via department
+      programsSnapshot.forEach(doc => {
+        const program = doc.data();
+        const departmentId = program.departmentId;
+        if (departmentId) {
+          const deptDoc = departmentsSnapshot.find(d => d.id === departmentId);
+          if (deptDoc) {
+            const dept = deptDoc.data();
+            const facultyId = dept.facultyId;
+            if (facultyId && facultyMap[facultyId]) {
+              facultyMap[facultyId].programs += 1;
+            }
+          }
+        }
+      });
+      
+      console.log("Calculated counts:", updatedFaculties.map(f => 
+        `${f.name}: ${f.departments} depts, ${f.programs} progs`).join(', '));
+      
+      return updatedFaculties;
+    };
+    
+    // Set up department listener first
+    const unsubscribeDepartments = onSnapshot(query(departmentsCol), (snapshot) => {
+      console.log("Departments snapshot updated:", snapshot.docs.length);
+      departmentsSnapshot = snapshot.docs;
+      
+      // Trigger count update if faculties already loaded
+      if (facultiesRef.current.length > 0) {
+        setFaculties(updateCounts(facultiesRef.current));
+      }
+    });
+    
+    // Set up programs listener
+    const unsubscribePrograms = onSnapshot(query(programsCol), (snapshot) => {
+      console.log("Programs snapshot updated:", snapshot.docs.length);
+      programsSnapshot = snapshot.docs;
+      
+      // Trigger count update if faculties and departments already loaded
+      if (facultiesRef.current.length > 0 && departmentsSnapshot.length > 0) {
+        setFaculties(updateCounts(facultiesRef.current));
+      }
+    });
+    
+    // Set up faculty listener
+    const unsubscribeFaculties = onSnapshot(facultiesQuery, (snapshot) => {
+      console.log("Faculties snapshot updated:", snapshot.docs.length);
+      
+      let facultyData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      // Calculate counts using the latest snapshots before setting state
+      if (departmentsSnapshot.length > 0) { 
+        facultyData = updateCounts(facultyData);
+      }
+      
       setFaculties(facultyData);
       setIsLoading(false);
     }, (error) => {
@@ -73,7 +208,11 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
     });
     
     // Cleanup function
-    return () => unsubscribe();
+    return () => {
+      unsubscribeFaculties();
+      unsubscribeDepartments();
+      unsubscribePrograms();
+    };
   }, []);
   
   // Function to load deans from users collection
@@ -233,6 +372,16 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
     faculty.deanName?.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
+  // Debug output to help diagnose the issue
+  useEffect(() => {
+    console.log("Faculties state updated:", faculties.length, "faculties available");
+    console.log("Filtered faculties:", filteredFaculties.length);
+    
+    if (faculties.length > 0) {
+      console.log("First faculty:", faculties[0]);
+    }
+  }, [faculties, filteredFaculties.length]);
+
   const handleFormChange = (field, value) => {
     setCurrentFaculty(prev => ({
       ...prev,
@@ -277,6 +426,60 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
     setShowDeleteConfirmation(false);
   };
 
+  // Function to fetch departments for a selected faculty
+  useEffect(() => {
+    if (!selectedFaculty) {
+      setFacultyDepartments([]);
+      return;
+    }
+    
+    setLoadingDepartments(true);
+    console.log("Fetching departments for faculty:", selectedFaculty.name);
+    
+    const departmentsCol = collection(db, 'departments');
+    const q = query(departmentsCol, where("facultyId", "==", selectedFaculty.id));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const departmentsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      console.log(`Found ${departmentsData.length} departments for ${selectedFaculty.name}`);
+      setFacultyDepartments(departmentsData);
+      setLoadingDepartments(false);
+    }, (error) => {
+      console.error("Error fetching faculty departments:", error);
+      toast.error("Failed to load departments");
+      setLoadingDepartments(false);
+    });
+    
+    return () => unsubscribe();
+  }, [selectedFaculty]);
+
+  // Function to manually refresh data
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      console.log("Manually refreshing faculty data...");
+      const facultiesCol = collection(db, 'faculties');
+      const facultiesQuery = query(facultiesCol, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(facultiesQuery);
+      
+      const facultyData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      console.log(`Manual refresh found ${facultyData.length} faculties`);
+      setFaculties(facultyData);
+    } catch (error) {
+      console.error("Error refreshing faculty data:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
   // Render faculty details view or faculty management screen
   if (selectedFaculty) {
     return (
@@ -356,13 +559,57 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
             </div>
             
             <div className={`mt-8 rounded-lg p-6 ${darkMode ? 'bg-gray-800' : 'bg-white shadow'}`}>
-              <h3 className={`font-medium text-lg mb-4 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Departments</h3>
-              <div className={`p-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-md`}>
-                {/* Departments list will go here once we connect departments to faculties */}
-                <p className={`text-center py-6 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                  Departments will be displayed here
-                </p>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className={`font-medium text-lg ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Departments</h3>
+                
+                {userRole === 'admin' && (
+                  <button
+                    onClick={() => window.location.href = '/departments'}
+                    className={`px-2 py-1 rounded text-sm ${
+                      darkMode ? 'bg-blue-900/20 text-blue-400 hover:bg-blue-900/30' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                    }`}
+                  >
+                    <Plus size={16} className="inline mr-1" />
+                    Add Department
+                  </button>
+                )}
               </div>
+              
+              {loadingDepartments ? (
+                <div className={`p-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-md`}>
+                  <p className={`text-center py-6 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    Loading departments...
+                  </p>
+                </div>
+              ) : facultyDepartments.length === 0 ? (
+                <div className={`p-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-md`}>
+                  <p className={`text-center py-6 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    No departments found for this faculty
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {facultyDepartments.map(dept => (
+                    <div key={dept.id} className={`p-4 rounded-md ${darkMode ? 'bg-gray-700/50' : 'bg-gray-50'} hover:shadow-sm transition-all`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{dept.name}</h4>
+                          <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                            Code: {dept.code} | HOD: {dept.hodName || 'Position Vacant'}
+                          </div>
+                        </div>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          dept.isActive
+                            ? (darkMode ? 'bg-green-900/20 text-green-400' : 'bg-green-100 text-green-700')
+                            : (darkMode ? 'bg-yellow-900/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                        }`}>
+                          {dept.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           
@@ -377,7 +624,7 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
                 <div className="flex justify-between items-center">
                   <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Departments</span>
                   <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                    {selectedFaculty.departments || 0}
+                    {facultyDepartments.length}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -406,6 +653,28 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
 
   return (
     <div className={`p-6 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+      {/* Debugging panel - always show for now */}
+      <div className={`mb-4 p-2 text-xs rounded border ${
+        darkMode ? 'bg-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'
+      }`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="font-bold">Data Status:</span> 
+            <span className={`ml-1 ${isLoading ? 'text-yellow-500' : 'text-green-500'}`}>
+              {isLoading ? 'Loading...' : `${faculties.length} faculties loaded`}
+            </span>
+          </div>
+          <button 
+            onClick={refreshData} 
+            className={`px-2 py-1 rounded ${
+              darkMode ? 'bg-gray-800 hover:bg-gray-700' : 'bg-gray-200 hover:bg-gray-300'
+            }`}
+          >
+            Refresh Data
+          </button>
+        </div>
+      </div>
+      
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Faculties Management</h1>
         {userRole === 'admin' && (
@@ -448,13 +717,19 @@ const FacultiesManagement = ({ darkMode, userRole = 'admin' }) => {
         <div className="flex justify-center items-center p-12">
           <div className="loader"></div>
         </div>
-      ) : filteredFaculties.length === 0 ? (
+      ) : faculties.length === 0 ? (
         <div className={`text-center py-12 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
           <Building size={48} className="mx-auto mb-4 opacity-20" />
           <p className="text-lg">No faculties found.</p>
           <p className="text-sm">
             {searchQuery ? 'Try a different search term.' : 'Start by adding a new faculty.'}
           </p>
+        </div>
+      ) : filteredFaculties.length === 0 ? (
+        <div className={`text-center py-12 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+          <Building size={48} className="mx-auto mb-4 opacity-20" />
+          <p className="text-lg">No faculties match your search.</p>
+          <p className="text-sm">Try a different search term.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

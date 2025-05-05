@@ -1,7 +1,7 @@
 import { addDoc, collection, deleteDoc, doc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, ClipboardList, Download, Home, PlusCircle, Search, UserX, Users } from 'lucide-react';
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, ClipboardList, Download, Home, PlusCircle, Search, User, UserX, Users } from 'lucide-react';
 import PropTypes from 'prop-types';
 import { useEffect, useState } from 'react';
 import { toast } from 'react-hot-toast';
@@ -1910,18 +1910,21 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
     const startMins = convertTimeToMinutes(event.startTime);
     const endMins = convertTimeToMinutes(event.endTime);
     
-    // Get first and last time slot for calculating total day height
+    // Get first time slot for calculating the offset
     const timeSlots = getTimeSlots();
-    const firstSlotTime = convertTimeToMinutes(timeSlots[0]);
-    const lastSlotTime = convertTimeToMinutes(timeSlots[timeSlots.length - 1]) + 60; // Add one hour for the last slot
+    const firstSlotTime = convertTimeToMinutes(timeSlots[0]); // e.g., 8 * 60 = 480
     
-    // Calculate total day height (in minutes)
-    const dayHeightInMinutes = lastSlotTime - firstSlotTime;
-    const dayHeightInPixels = timeSlots.length * 80; // Each time slot is 80px tall
+    // Define the scale: pixels per minute
+    const pixelsPerHour = 80; // Height of each hour slot in the grid
+    const minutesPerHour = 60;
+    const pixelsPerMinute = pixelsPerHour / minutesPerHour; // 80 / 60 = 4/3
     
-    // Calculate position and height relative to first time slot
-    const top = ((startMins - firstSlotTime) / dayHeightInMinutes) * dayHeightInPixels;
-    const height = ((endMins - startMins) / dayHeightInMinutes) * dayHeightInPixels;
+    // Calculate top position relative to the start of the grid (firstSlotTime)
+    const top = (startMins - firstSlotTime) * pixelsPerMinute;
+    
+    // Calculate height based on event duration
+    const durationMinutes = Math.max(1, endMins - startMins); // Ensure at least 1 minute duration
+    const height = durationMinutes * pixelsPerMinute;
     
     return {
       top: `${Math.max(top, 0)}px`,
@@ -2364,7 +2367,7 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       return (
                         <div 
                           key={event.id}
-                      className={`absolute p-2 rounded-md text-xs border-l-4 shadow-sm hover:shadow-md transition-shadow ${courseColor.bg} ${courseColor.border} ${courseColor.text}`}
+                      className={`absolute p-2 rounded-md text-xs border-l-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer group ${courseColor.bg} ${courseColor.border} ${courseColor.text}`}
                       style={{
                         ...position,
                         width: event.width || 'calc(100% - 8px)',
@@ -2373,35 +2376,38 @@ const EnhancedScheduleCalendar = ({ darkMode, userRole, userDepartment = 'Comput
                       }}
                       onClick={() => handleViewEvent(event)}
                     >
-                      <div className="font-medium truncate">
-                        <span className="text-sm font-bold">
-                          {event.courseCode || event.title}
-                        </span>
-                        <span className={`ml-2 text-xs px-1 py-0.5 rounded-sm ${sessionType.class}`}>
+                      <div className="font-bold truncate mb-1">
+                        {event.courseCode || event.title}
+                        <span className={`ml-1.5 text-xs px-1 py-0.5 rounded-sm ${sessionType.class}`}>
                           {sessionType.label}
                         </span>
                       </div>
-                      <div className="mt-1 text-xs">
-                        <span className="font-medium">{event.room}</span>
+                      <div className="text-xs flex items-center mb-0.5">
+                        <Home className="h-3 w-3 mr-1 flex-shrink-0" />
+                        <span className="truncate">{event.room || 'TBA'}</span>
                       </div>
-                      <div className="mt-1 flex justify-between text-xs">
-                        <span className="italic truncate">{event.lecturer}</span>
-                        <span>{event.startTime}-{event.endTime}</span>
+                      <div className="text-xs flex items-center">
+                        <User className="h-3 w-3 mr-1 flex-shrink-0" />
+                        <span className="italic truncate">{event.lecturer || 'Not Assigned'}</span>
                       </div>
+                      
+                      {/* Remove delete button from here for cleaner look, deletion handled in modal */}
+                      {/* 
                       <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteEvent(event.id);
-                            }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteEvent(event.id);
+                        }}
                         className={`absolute top-1 right-1 text-xs w-5 h-5 flex items-center justify-center rounded-full opacity-0 group-hover:opacity-100 hover:bg-opacity-70 ${
                           darkMode ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                              }`}
-                            >
-                              ×
-                            </button>
-                      </div>
-                    );
-                  })}
+                        }`}
+                      >
+                        ×
+                      </button>
+                      */}
+                    </div>
+                  );
+                })}
                   </div>
                 );
               })}
